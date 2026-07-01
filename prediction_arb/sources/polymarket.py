@@ -10,18 +10,43 @@ GAMMA_URL = "https://gamma-api.polymarket.com"
 
 
 def fetch_markets(limit: int = 100) -> list[Market]:
-    data = get_json(
-        f"{GAMMA_URL}/markets",
-        {
-            "active": "true",
-            "closed": "false",
-            "limit": limit,
-            "order": "volume24hr",
-            "ascending": "false",
-        },
-    )
-    rows = data if isinstance(data, list) else data.get("markets", [])
-    return [_normalize_market(row) for row in rows if isinstance(row, dict)]
+    markets: list[Market] = []
+    seen: set[str] = set()
+    offset = 0
+    page_size = 100
+
+    while len(markets) < limit and offset < 10_000:
+        current_limit = min(page_size, limit - len(markets))
+        data = get_json(
+            f"{GAMMA_URL}/markets",
+            {
+                "active": "true",
+                "closed": "false",
+                "limit": current_limit,
+                "offset": offset,
+                "order": "volume24hr",
+                "ascending": "false",
+            },
+        )
+        rows = data if isinstance(data, list) else data.get("markets", [])
+        if not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            market = _normalize_market(row)
+            key = market.market_id or market.title
+            if key in seen:
+                continue
+            seen.add(key)
+            markets.append(market)
+            if len(markets) >= limit:
+                break
+        offset += len(rows)
+        if len(rows) < current_limit:
+            break
+
+    return markets[:limit]
 
 
 def search_markets(query: str, limit: int = 100) -> list[Market]:

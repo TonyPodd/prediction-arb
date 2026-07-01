@@ -95,23 +95,23 @@ def market_match_details(left: Market, right: Market) -> MatchDetails:
 
 def condition_from_market(market: Market) -> Condition:
     raw = market.raw or {}
-    text = " ".join(
+    summary_text = " ".join(
         str(item)
         for item in [
             market.title,
-            raw.get("description", ""),
             raw.get("slug", ""),
             raw.get("groupItemTitle", ""),
         ]
         if item
     )
+    text = " ".join(str(item) for item in [summary_text, raw.get("description", "")] if item)
     kind = _condition_kind(text)
     return Condition(
         kind=kind,
         asset=_asset(text),
         direction=_direction(text, kind),
         threshold=_threshold(text),
-        interval_minutes=_interval_minutes(text),
+        interval_minutes=_interval_minutes(summary_text),
         deadline=_semantic_deadline(text) or _deadline(market.close_time),
     )
 
@@ -263,7 +263,10 @@ def _threshold(value: str) -> float | None:
 def _interval_minutes(value: str) -> int | None:
     normalized = value.lower()
     patterns = [
+        (r"\b(\d+)\s*m\b", 1),
         (r"\b(\d+)\s*(?:min|mins|minute|minutes)\b", 1),
+        (r"\b(\d+)\s*d\b", 24 * 60),
+        (r"\b(\d+)\s*w\b", 7 * 24 * 60),
         (r"\b(\d+)\s*(?:h|hr|hrs|hour|hours)\b", 60),
     ]
     for pattern, multiplier in patterns:

@@ -20,6 +20,11 @@ def market(source: str, title: str, close_time: str = "2026-12-31T00:00:00Z") ->
     )
 
 
+def raw_market(source: str, title: str, raw: dict, close_time: str = "2026-12-31T00:00:00Z") -> Market:
+    item = market(source, title, close_time)
+    return Market(item.source, item.market_id, item.title, item.url, item.close_time, item.volume, item.liquidity, item.top, raw)
+
+
 class MatchingTests(unittest.TestCase):
     def test_by_end_and_before_year_share_semantic_deadline(self) -> None:
         left = market("limitless", "Will China invade Taiwan by end of 2026?", "2027-01-01T04:59:00Z")
@@ -70,6 +75,27 @@ class MatchingTests(unittest.TestCase):
         details = market_match_details(left, right)
 
         self.assertIn("interval_differs", details.warnings)
+
+    def test_interval_extracts_compact_slug_units(self) -> None:
+        parsed = condition_from_market(
+            raw_market("polymarket", "Bitcoin Up or Down - July 1, 2:10PM-2:15PM ET", {"slug": "btc-updown-5m-1782929400"})
+        )
+
+        self.assertEqual(parsed.interval_minutes, 5)
+
+    def test_interval_ignores_resolution_candle_description(self) -> None:
+        parsed = condition_from_market(
+            raw_market(
+                "polymarket",
+                "Bitcoin Up or Down on July 2?",
+                {
+                    "slug": "bitcoin-up-or-down-on-july-2-2026",
+                    "description": "This resolves using the Binance 1 minute candle for BTC/USDT.",
+                },
+            )
+        )
+
+        self.assertIsNone(parsed.interval_minutes)
 
 
 if __name__ == "__main__":
