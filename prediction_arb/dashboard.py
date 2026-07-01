@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
+from prediction_arb.paper import paper_enter_from_monitor
+from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
 
 
@@ -50,6 +52,19 @@ def _handler(default_input: Path):
                     assume = _bool(query.get("assume_sell_inventory", ["true"])[0])
                     limit = _int(query.get("limit", ["10"])[0], default=10)
                     self._send_json(plan_capital(latest_opportunities(path), cash, inventory, assume_sell_inventory=assume, max_allocations=limit))
+                    return
+                if parsed.path == "/api/portfolio":
+                    query = parse_qs(parsed.query)
+                    path = _safe_monitor_path(query.get("portfolio", ["data/portfolio.json"])[0])
+                    self._send_json(portfolio_summary(load_portfolio(path)))
+                    return
+                if parsed.path == "/api/paper-enter":
+                    query = parse_qs(parsed.query)
+                    monitor = _safe_monitor_path(query.get("input", [str(default_input)])[0])
+                    portfolio = _safe_monitor_path(query.get("portfolio", ["data/portfolio.json"])[0])
+                    limit = _int(query.get("limit", ["5"])[0], default=5)
+                    require_inventory = _bool(query.get("require_sell_inventory", ["false"])[0])
+                    self._send_json(paper_enter_from_monitor(monitor, portfolio, max_allocations=limit, require_sell_inventory=require_inventory))
                     return
                 self.send_error(404)
             except ValueError as exc:
@@ -167,6 +182,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     <div class="tabs">
       <button class="tab active" data-view="overview">Overview</button>
       <button class="tab" data-view="capital">Capital Planner</button>
+      <button class="tab" data-view="portfolio">Paper Portfolio</button>
       <button class="tab" data-view="events">Events</button>
     </div>
   </header>
@@ -224,10 +240,35 @@ _DASHBOARD_HTML = r"""<!doctype html>
     <section class="view" id="events">
       <div class="panel"><h2>Monitor Events</h2><div class="events" id="eventsFull"></div></div>
     </section>
+
+    <section class="view" id="portfolio">
+      <div class="panel">
+        <h2>Paper Portfolio</h2>
+        <div class="planner">
+          <label><div class="label">Portfolio file</div><input id="portfolioPath" value="data/portfolio.json"></label>
+          <label><div class="label">Max new entries</div><input id="paperLimit" type="number" value="5" min="1"></label>
+          <label class="switch"><input id="paperRequireInventory" type="checkbox"> require sell inventory</label>
+          <button class="primary" id="paperEnterBtn">Paper Enter Latest</button>
+          <button id="portfolioRefreshBtn">Refresh Portfolio</button>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Open Positions</div><div class="value" id="portfolioOpen">0</div></div>
+        <div class="metric"><div class="label">Open Notional</div><div class="value" id="portfolioNotional">$0</div></div>
+        <div class="metric"><div class="label">Open Est. Profit</div><div class="value ok" id="portfolioProfit">$0</div></div>
+        <div class="metric"><div class="label">Realized PnL</div><div class="value" id="portfolioPnl">$0</div></div>
+        <div class="metric"><div class="label">Limitless Cash</div><div class="value" id="portfolioLimitless">$0</div></div>
+        <div class="metric"><div class="label">Polymarket Cash</div><div class="value" id="portfolioPolymarket">$0</div></div>
+      </div>
+      <div class="panel">
+        <h2>Open Paper Positions</h2>
+        <table><thead><tr><th>Route</th><th>Cash</th><th>Inventory</th><th>Entry Edge</th><th>Est. Profit</th><th>Opened</th></tr></thead><tbody id="portfolioTable"></tbody></table>
+      </div>
+    </section>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -260,6 +301,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       state.report = await json(`/api/report?input=${q}&top=30`);
       state.snapshots = await json(`/api/snapshots?input=${q}&limit=300`);
       await refreshPlanner();
+      await refreshPortfolio();
       render();
     }
 
@@ -268,6 +310,18 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const assume = el("assumeInventory").checked ? "true" : "false";
       const limit = Number(el("allocationLimit").value || 10);
       state.plan = await json(`/api/capital?input=${encodeURIComponent(state.input)}&cash=${encodeURIComponent(cash)}&assume_sell_inventory=${assume}&limit=${limit}`);
+    }
+
+    async function refreshPortfolio() {
+      state.portfolio = await json(`/api/portfolio?portfolio=${encodeURIComponent(el("portfolioPath").value || "data/portfolio.json")}`);
+    }
+
+    async function paperEnter() {
+      const portfolio = encodeURIComponent(el("portfolioPath").value || "data/portfolio.json");
+      const limit = Number(el("paperLimit").value || 5);
+      const requireInventory = el("paperRequireInventory").checked ? "true" : "false";
+      state.portfolio = (await json(`/api/paper-enter?input=${encodeURIComponent(state.input)}&portfolio=${portfolio}&limit=${limit}&require_sell_inventory=${requireInventory}`)).portfolio;
+      render();
     }
 
     function render() {
@@ -285,6 +339,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderEvents(el("eventsSmall"), state.snapshots.slice(-12).reverse());
       renderEvents(el("eventsFull"), state.snapshots.slice(-80).reverse());
       renderPlan(state.plan || {});
+      renderPortfolio(state.portfolio || {});
       drawTrend(state.snapshots);
     }
 
@@ -314,6 +369,20 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("rejectedTable").innerHTML = (plan.rejected || []).slice(0, 20).map(row => `
         <tr><td>${row.outcome || ""} ${row.buy_source || ""}->${row.sell_source || ""}</td><td class="bad">${row.planner_rejection_reason || ""}</td>
         <td class="num">${money(row.buy_cash_required)} / ${fmt.format(row.sell_inventory_required || 0)} shares</td></tr>`).join("");
+    }
+
+    function renderPortfolio(portfolio) {
+      const cash = portfolio.cash || {};
+      el("portfolioOpen").textContent = portfolio.open_count || 0;
+      el("portfolioNotional").textContent = money(portfolio.open_notional);
+      el("portfolioProfit").textContent = money(portfolio.open_estimated_profit);
+      el("portfolioPnl").textContent = money(portfolio.realized_pnl);
+      el("portfolioLimitless").textContent = money(cash.limitless);
+      el("portfolioPolymarket").textContent = money(cash.polymarket);
+      el("portfolioTable").innerHTML = (portfolio.open_positions || []).map(row => `
+        <tr><td><div class="route">${row.outcome || ""} ${row.route || ""}</div><div class="muted">${escapeHtml(row.buy_title || "")}</div><div class="muted">${row.key || ""}</div></td>
+        <td class="num">${money(row.buy_cash_required)}</td><td class="num">${fmt.format(row.sell_inventory_required || 0)}<br><span class="muted">${row.sell_inventory_key || ""}</span></td>
+        <td class="num ok">${pct(row.entry_net_edge)}</td><td class="num ok">${money(row.entry_estimated_profit)}</td><td class="num">${row.opened_at || ""}</td></tr>`).join("");
     }
 
     function renderEvents(target, rows) {
@@ -348,6 +417,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("refreshBtn").addEventListener("click", refresh);
     el("fileSelect").addEventListener("change", refresh);
     el("planBtn").addEventListener("click", () => refreshPlanner().then(render));
+    el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
+    el("paperEnterBtn").addEventListener("click", paperEnter);
     loadFiles().then(refresh).catch(err => { el("subtitle").textContent = err.message; });
     setInterval(refresh, 30000);
   </script>

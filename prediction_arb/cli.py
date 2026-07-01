@@ -15,6 +15,8 @@ from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close
+from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
@@ -132,6 +134,29 @@ def main() -> None:
     capital_parser.add_argument("--max-allocations", type=int, default=10)
     capital_parser.add_argument("--output", type=Path)
 
+    portfolio_init_parser = subparsers.add_parser("portfolio-init", help="Initialize local paper portfolio state.")
+    portfolio_init_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
+    portfolio_init_parser.add_argument("--cash", default="limitless=250,polymarket=250")
+    portfolio_init_parser.add_argument("--overwrite", action="store_true")
+    portfolio_init_parser.add_argument("--output", type=Path)
+
+    portfolio_status_parser = subparsers.add_parser("portfolio-status", help="Show local paper portfolio state.")
+    portfolio_status_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
+    portfolio_status_parser.add_argument("--output", type=Path)
+
+    paper_enter_parser = subparsers.add_parser("paper-enter", help="Open paper positions from latest monitor opportunities.")
+    paper_enter_parser.add_argument("--input", type=Path, required=True)
+    paper_enter_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
+    paper_enter_parser.add_argument("--max-allocations", type=int, default=5)
+    paper_enter_parser.add_argument("--require-sell-inventory", action="store_true")
+    paper_enter_parser.add_argument("--output", type=Path)
+
+    paper_close_parser = subparsers.add_parser("paper-close", help="Mark a paper position closed.")
+    paper_close_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
+    paper_close_parser.add_argument("--key", required=True)
+    paper_close_parser.add_argument("--realized-pnl", type=float, default=0.0)
+    paper_close_parser.add_argument("--output", type=Path)
+
     telegram_test_parser = subparsers.add_parser("telegram-test", help="Send a test Telegram message.")
     telegram_test_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     telegram_test_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
@@ -171,6 +196,14 @@ def main() -> None:
         _monitor_report(args)
     elif args.command == "capital-plan":
         _capital_plan(args)
+    elif args.command == "portfolio-init":
+        _portfolio_init(args)
+    elif args.command == "portfolio-status":
+        _portfolio_status(args)
+    elif args.command == "paper-enter":
+        _paper_enter(args)
+    elif args.command == "paper-close":
+        _paper_close(args)
     elif args.command == "telegram-test":
         _telegram_test(args)
     elif args.command == "telegram-bot":
@@ -411,6 +444,30 @@ def _capital_plan(args: argparse.Namespace) -> None:
         assume_sell_inventory=not args.require_sell_inventory,
         max_allocations=args.max_allocations,
     )
+    _write_or_print([payload], args.output)
+
+
+def _portfolio_init(args: argparse.Namespace) -> None:
+    portfolio = initialize_portfolio(args.portfolio, parse_balances(args.cash), overwrite=args.overwrite)
+    _write_or_print([portfolio_summary(portfolio)], args.output)
+
+
+def _portfolio_status(args: argparse.Namespace) -> None:
+    _write_or_print([portfolio_summary(load_portfolio(args.portfolio))], args.output)
+
+
+def _paper_enter(args: argparse.Namespace) -> None:
+    payload = paper_enter_from_monitor(
+        args.input,
+        args.portfolio,
+        max_allocations=args.max_allocations,
+        require_sell_inventory=args.require_sell_inventory,
+    )
+    _write_or_print([payload], args.output)
+
+
+def _paper_close(args: argparse.Namespace) -> None:
+    payload = paper_mark_close(args.portfolio, args.key, realized_pnl=args.realized_pnl)
     _write_or_print([payload], args.output)
 
 

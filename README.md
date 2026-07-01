@@ -117,6 +117,14 @@ python -m prediction_arb.cli capital-plan --input data/monitor-short-all.jsonl -
 python -m prediction_arb.cli capital-plan --input data/monitor-short-all.jsonl --cash limitless=250,polymarket=250 --require-sell-inventory --inventory polymarket:YES:123=100
 ```
 
+Run local paper trading state:
+
+```bash
+python -m prediction_arb.cli portfolio-init --cash limitless=250,polymarket=250
+python -m prediction_arb.cli paper-enter --input data/monitor-short-all.jsonl --max-allocations 5
+python -m prediction_arb.cli portfolio-status
+```
+
 Candidate output includes parsed conditions:
 
 ```text
@@ -144,7 +152,8 @@ deadline: UTC minute when available
 - `dashboard` serves a local read-only UI with summary metrics, best route ranking, recent monitor events, and a best-edge trend chart.
 - `dashboard` is not tied to Taiwan. It lists every `data/monitor*.jsonl` file and defaults to `monitor-short-all.jsonl` when available.
 - `capital-plan` ranks latest opportunities by estimated profit and checks platform cash. By default it assumes sell-side inventory exists; pass `--require-sell-inventory` to model outcome-share inventory explicitly.
-- `telegram-bot` replies to `/status`, `/report`, `/capital`, `/files`, and `/help` using the configured monitor JSONL file.
+- `portfolio-init`, `paper-enter`, `paper-close`, and `portfolio-status` maintain local paper-trading state in `data/portfolio.json`.
+- `telegram-bot` replies to `/status`, `/report`, `/capital`, `/portfolio`, `/paper_enter`, `/files`, and `/help` using the configured monitor JSONL file.
 - `fee_notes` explains which fee assumptions were applied. `--include-filtered` includes rejected candidates with a reason.
 - Any reported opportunity should be treated as a candidate for research, not as a trade signal.
 

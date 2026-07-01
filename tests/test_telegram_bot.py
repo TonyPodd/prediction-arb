@@ -70,6 +70,11 @@ class TelegramBotTests(unittest.TestCase):
         self.assertIn("Capital plan", text or "")
         self.assertIn("allocated=1", text or "")
 
+    def test_handle_portfolio_command(self) -> None:
+        text = handle_bot_command("/portfolio", Path("missing.jsonl"))
+
+        self.assertIn("Paper portfolio", text or "")
+
 
 if __name__ == "__main__":
     unittest.main()
