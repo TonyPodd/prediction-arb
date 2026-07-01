@@ -35,6 +35,11 @@ class ReportingTests(unittest.TestCase):
                     ],
                 },
                 {
+                    "type": "error",
+                    "detected_at": "2026-07-01T00:00:30+00:00",
+                    "error": "RuntimeError: temporary failure",
+                },
+                {
                     "detected_at": "2026-07-01T00:01:00+00:00",
                     "opportunity_count": 1,
                     "new_count": 0,
@@ -60,7 +65,10 @@ class ReportingTests(unittest.TestCase):
 
             summary = summarize_monitor_history(path)
 
-        self.assertEqual(summary["snapshots"], 2)
+        self.assertEqual(summary["snapshots"], 3)
+        self.assertEqual(summary["successful_snapshots"], 2)
+        self.assertEqual(summary["error_snapshots"], 1)
+        self.assertEqual(summary["last_error"], "RuntimeError: temporary failure")
         self.assertEqual(summary["total_new_events"], 1)
         self.assertEqual(summary["latest_active_count"], 1)
         self.assertEqual(summary["unique_routes_seen"], 1)

@@ -5,6 +5,7 @@ import json
 import re
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
@@ -103,6 +104,7 @@ def main() -> None:
     monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
     monitor_parser.add_argument("--webhook-url", help="POST new-opportunity alerts to this webhook URL.")
     monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
+    monitor_parser.add_argument("--stop-on-error", action="store_true", help="Exit instead of appending an error snapshot when a scan fails.")
 
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
     report_parser.add_argument("--input", type=Path, required=True)
@@ -310,29 +312,36 @@ def _monitor(args: argparse.Namespace) -> None:
     try:
         while True:
             iteration += 1
-            limitless_markets = _fetch_limitless(args.limit, args.query)
-            polymarket_markets = _fetch_polymarket(args.limit, args.query)
-            snapshot, previous_keys = monitor_once(
-                query=args.query,
-                limitless_markets=limitless_markets,
-                polymarket_markets=polymarket_markets,
-                previous_keys=previous_keys,
-                size=args.size,
-                min_net_edge=args.min_net_edge,
-                safety_buffer=args.safety_buffer,
-                min_match_score=args.min_match_score,
-                fee_bps=args.fee_bps,
-            )
-            payload = _serializable(asdict(snapshot))
-            _append_jsonl(payload, args.output)
-            if args.print_snapshots:
-                print(json.dumps(payload, indent=2, ensure_ascii=False))
-            else:
-                print(
-                    f"{snapshot.detected_at.isoformat()} "
-                    f"active={snapshot.opportunity_count} new={snapshot.new_count} gone={snapshot.gone_count}"
+            try:
+                limitless_markets = _fetch_limitless(args.limit, args.query)
+                polymarket_markets = _fetch_polymarket(args.limit, args.query)
+                snapshot, previous_keys = monitor_once(
+                    query=args.query,
+                    limitless_markets=limitless_markets,
+                    polymarket_markets=polymarket_markets,
+                    previous_keys=previous_keys,
+                    size=args.size,
+                    min_net_edge=args.min_net_edge,
+                    safety_buffer=args.safety_buffer,
+                    min_match_score=args.min_match_score,
+                    fee_bps=args.fee_bps,
                 )
-            _send_monitor_alert_if_needed(snapshot, args)
+                payload = _serializable(asdict(snapshot))
+                _append_jsonl(payload, args.output)
+                if args.print_snapshots:
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    print(
+                        f"{snapshot.detected_at.isoformat()} "
+                        f"active={snapshot.opportunity_count} new={snapshot.new_count} gone={snapshot.gone_count}"
+                    )
+                _send_monitor_alert_if_needed(snapshot, args)
+            except Exception as exc:
+                if args.stop_on_error:
+                    raise
+                payload = _monitor_error_payload(args.query, exc)
+                _append_jsonl(payload, args.output)
+                print(f"{payload['detected_at']} error={payload['error']}")
 
             if args.iterations and iteration >= args.iterations:
                 break
@@ -344,6 +353,15 @@ def _monitor(args: argparse.Namespace) -> None:
 def _monitor_report(args: argparse.Namespace) -> None:
     payload = summarize_monitor_history(args.input, top=args.top)
     _write_or_print([payload], args.output)
+
+
+def _monitor_error_payload(query: str, exc: Exception) -> dict:
+    return {
+        "type": "error",
+        "query": query,
+        "detected_at": datetime.now(tz=timezone.utc).isoformat(),
+        "error": f"{exc.__class__.__name__}: {exc}",
+    }
 
 
 def _write_or_print(payload: list[dict], output: Path | None) -> None:

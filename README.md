@@ -108,8 +108,8 @@ deadline: UTC minute when available
 - `depth-sweep` repeats depth scanning across multiple share sizes and reports best net edge/profit per size.
 - `depth-max` searches a geometric size grid and returns the largest size that still passes `--min-net-edge`.
 - Fee estimates are per-share. Polymarket fees are zero when `feesEnabled=false`; otherwise the scanner uses `rate * price * (1 - price)` from `feeSchedule` or the documented taker fallback. Limitless exposes fee flags but not the full curve in the market payload, so use `--fee-bps` as a conservative manual overlay.
-- `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. If the JSONL file already exists, the next run resumes comparison from the last saved `active_keys`. Use `--alert-new` for compact terminal alerts, or `--webhook-url` for JSON webhook alerts.
-- `monitor-report` summarizes JSONL history and ranks routes by the best observed net edge.
+- `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. If the JSONL file already exists, the next run resumes comparison from the last saved `active_keys`. Use `--alert-new` for compact terminal alerts, or `--webhook-url` for JSON webhook alerts. Temporary scan failures are stored as error snapshots; use `--stop-on-error` for strict debugging.
+- `monitor-report` summarizes JSONL history, counts error snapshots, and ranks routes by the best observed net edge.
 - `fee_notes` explains which fee assumptions were applied. `--include-filtered` includes rejected candidates with a reason.
 - Any reported opportunity should be treated as a candidate for research, not as a trade signal.
 

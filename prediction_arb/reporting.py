@@ -6,11 +6,13 @@ from pathlib import Path
 
 def summarize_monitor_history(path: Path, top: int = 10) -> dict:
     snapshots = _read_jsonl(path)
+    error_snapshots = [item for item in snapshots if item.get("type") == "error"]
+    success_snapshots = [item for item in snapshots if item.get("type") != "error"]
     best_by_key: dict[str, dict] = {}
     total_new = 0
     total_gone = 0
 
-    for snapshot in snapshots:
+    for snapshot in success_snapshots:
         total_new += int(snapshot.get("new_count") or 0)
         total_gone += int(snapshot.get("gone_count") or 0)
         for item in snapshot.get("opportunities", []):
@@ -22,6 +24,7 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
             if previous is None or (current["net_edge"] or -999.0) > (previous["net_edge"] or -999.0):
                 best_by_key[key] = current
 
+    latest_success = success_snapshots[-1] if success_snapshots else {}
     latest = snapshots[-1] if snapshots else {}
     best_routes = sorted(
         best_by_key.values(),
@@ -31,12 +34,16 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
     return {
         "input": str(path),
         "snapshots": len(snapshots),
+        "successful_snapshots": len(success_snapshots),
+        "error_snapshots": len(error_snapshots),
         "first_detected_at": snapshots[0].get("detected_at") if snapshots else None,
         "last_detected_at": latest.get("detected_at"),
+        "last_success_detected_at": latest_success.get("detected_at"),
+        "last_error": error_snapshots[-1].get("error") if error_snapshots else None,
         "total_new_events": total_new,
         "total_gone_events": total_gone,
-        "latest_active_count": latest.get("opportunity_count", 0),
-        "latest_active_keys": latest.get("active_keys", []),
+        "latest_active_count": latest_success.get("opportunity_count", 0),
+        "latest_active_keys": latest_success.get("active_keys", []),
         "unique_routes_seen": len(best_by_key),
         "best_routes": best_routes[:top],
     }
