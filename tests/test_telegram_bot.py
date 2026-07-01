@@ -75,6 +75,11 @@ class TelegramBotTests(unittest.TestCase):
 
         self.assertIn("Paper portfolio", text or "")
 
+    def test_handle_paper_sync_command(self) -> None:
+        text = handle_bot_command("/paper_sync missing.jsonl", Path("missing.jsonl"))
+
+        self.assertIn("Paper sync", text or "")
+
 
 if __name__ == "__main__":
     unittest.main()

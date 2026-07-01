@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
-from prediction_arb.paper import paper_enter_from_monitor
+from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
 
@@ -65,6 +65,12 @@ def _handler(default_input: Path):
                     limit = _int(query.get("limit", ["5"])[0], default=5)
                     require_inventory = _bool(query.get("require_sell_inventory", ["false"])[0])
                     self._send_json(paper_enter_from_monitor(monitor, portfolio, max_allocations=limit, require_sell_inventory=require_inventory))
+                    return
+                if parsed.path == "/api/paper-sync":
+                    query = parse_qs(parsed.query)
+                    monitor = _safe_monitor_path(query.get("input", [str(default_input)])[0])
+                    portfolio = _safe_monitor_path(query.get("portfolio", ["data/portfolio.json"])[0])
+                    self._send_json(paper_sync_from_monitor(monitor, portfolio))
                     return
                 self.send_error(404)
             except ValueError as exc:
@@ -249,6 +255,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <label><div class="label">Max new entries</div><input id="paperLimit" type="number" value="5" min="1"></label>
           <label class="switch"><input id="paperRequireInventory" type="checkbox"> require sell inventory</label>
           <button class="primary" id="paperEnterBtn">Paper Enter Latest</button>
+          <button id="paperSyncBtn">Sync Marks</button>
           <button id="portfolioRefreshBtn">Refresh Portfolio</button>
         </div>
       </div>
@@ -256,9 +263,9 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <div class="metric"><div class="label">Open Positions</div><div class="value" id="portfolioOpen">0</div></div>
         <div class="metric"><div class="label">Open Notional</div><div class="value" id="portfolioNotional">$0</div></div>
         <div class="metric"><div class="label">Open Est. Profit</div><div class="value ok" id="portfolioProfit">$0</div></div>
+        <div class="metric"><div class="label">Current Est. Profit</div><div class="value ok" id="portfolioCurrentProfit">$0</div></div>
         <div class="metric"><div class="label">Realized PnL</div><div class="value" id="portfolioPnl">$0</div></div>
         <div class="metric"><div class="label">Limitless Cash</div><div class="value" id="portfolioLimitless">$0</div></div>
-        <div class="metric"><div class="label">Polymarket Cash</div><div class="value" id="portfolioPolymarket">$0</div></div>
       </div>
       <div class="panel">
         <h2>Open Paper Positions</h2>
@@ -324,6 +331,12 @@ _DASHBOARD_HTML = r"""<!doctype html>
       render();
     }
 
+    async function paperSync() {
+      const portfolio = encodeURIComponent(el("portfolioPath").value || "data/portfolio.json");
+      state.portfolio = (await json(`/api/paper-sync?input=${encodeURIComponent(state.input)}&portfolio=${portfolio}`)).portfolio;
+      render();
+    }
+
     function render() {
       const r = state.report || {};
       const best = (r.best_routes || [])[0] || {};
@@ -376,13 +389,13 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("portfolioOpen").textContent = portfolio.open_count || 0;
       el("portfolioNotional").textContent = money(portfolio.open_notional);
       el("portfolioProfit").textContent = money(portfolio.open_estimated_profit);
+      el("portfolioCurrentProfit").textContent = money(portfolio.current_estimated_profit);
       el("portfolioPnl").textContent = money(portfolio.realized_pnl);
       el("portfolioLimitless").textContent = money(cash.limitless);
-      el("portfolioPolymarket").textContent = money(cash.polymarket);
       el("portfolioTable").innerHTML = (portfolio.open_positions || []).map(row => `
         <tr><td><div class="route">${row.outcome || ""} ${row.route || ""}</div><div class="muted">${escapeHtml(row.buy_title || "")}</div><div class="muted">${row.key || ""}</div></td>
         <td class="num">${money(row.buy_cash_required)}</td><td class="num">${fmt.format(row.sell_inventory_required || 0)}<br><span class="muted">${row.sell_inventory_key || ""}</span></td>
-        <td class="num ok">${pct(row.entry_net_edge)}</td><td class="num ok">${money(row.entry_estimated_profit)}</td><td class="num">${row.opened_at || ""}</td></tr>`).join("");
+        <td class="num ok">${pct(row.current_net_edge ?? row.entry_net_edge)}</td><td class="num ok">${money(row.current_estimated_profit ?? row.entry_estimated_profit)}</td><td class="num">${row.market_status || "entry"}<br><span class="muted">${row.opened_at || ""}</span></td></tr>`).join("");
     }
 
     function renderEvents(target, rows) {
@@ -419,6 +432,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("planBtn").addEventListener("click", () => refreshPlanner().then(render));
     el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
     el("paperEnterBtn").addEventListener("click", paperEnter);
+    el("paperSyncBtn").addEventListener("click", paperSync);
     loadFiles().then(refresh).catch(err => { el("subtitle").textContent = err.message; });
     setInterval(refresh, 30000);
   </script>

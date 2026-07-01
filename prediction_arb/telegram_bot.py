@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib import request
 
 from prediction_arb.capital import plan_capital
-from prediction_arb.paper import paper_enter_from_monitor
+from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 
@@ -43,6 +43,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "/capital [limitless_cash] [polymarket_cash] [file]\n"
             "/portfolio\n"
             "/paper_enter [file] [max]\n"
+            "/paper_sync [file]\n"
             "/files\n"
             "/help"
         )
@@ -98,7 +99,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "Paper portfolio\n"
             f"cash limitless=${summary['cash'].get('limitless', 0):.2f} polymarket=${summary['cash'].get('polymarket', 0):.2f}\n"
             f"open={summary['open_count']} closed={summary['closed_count']} rejected={summary['rejected_count']}\n"
-            f"open_notional=${summary['open_notional']:.2f} open_est_profit=${summary['open_estimated_profit']:.2f}\n"
+            f"open_notional=${summary['open_notional']:.2f} open_est_profit=${summary['open_estimated_profit']:.2f} current_est_profit=${summary['current_estimated_profit']:.2f}\n"
             f"realized_pnl=${summary['realized_pnl']:.2f}"
         )
     if command == "/paper_enter":
@@ -111,6 +112,15 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"entered={result['entered_count']}\n"
             f"open={result['portfolio']['open_count']} cash_limitless=${result['portfolio']['cash'].get('limitless', 0):.2f} "
             f"cash_polymarket=${result['portfolio']['cash'].get('polymarket', 0):.2f}"
+        )
+    if command == "/paper_sync":
+        path = _file_from_name(parts[1]) if len(parts) > 1 else monitor_file
+        result = paper_sync_from_monitor(path, Path("data/portfolio.json"))
+        return (
+            "Paper sync\n"
+            f"file: {path}\n"
+            f"updated={result['updated_count']} stale={result['stale_count']}\n"
+            f"current_est_profit=${result['portfolio']['current_estimated_profit']:.2f}"
         )
     return None
 

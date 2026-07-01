@@ -87,6 +87,37 @@ def paper_mark_close(portfolio_path: Path, key: str, realized_pnl: float = 0.0) 
     return {"closed": closed, "portfolio": portfolio_summary(portfolio)}
 
 
+def paper_sync_from_monitor(monitor_path: Path, portfolio_path: Path) -> dict:
+    portfolio = load_portfolio(portfolio_path)
+    latest_by_key = {_opportunity_key(item): item for item in latest_opportunities(monitor_path)}
+    updated = []
+    stale = []
+    for position in portfolio.get("open_positions", []):
+        current = latest_by_key.get(position.get("key"))
+        position["last_checked_at"] = now_iso()
+        if current is None:
+            position["market_status"] = "not_in_latest_snapshot"
+            stale.append(position)
+            continue
+        current_net_edge = float(current.get("net_edge") or 0.0)
+        current_size = float(current.get("executable_size") or 0.0)
+        position["market_status"] = "active"
+        position["current_net_edge"] = current_net_edge
+        position["current_estimated_profit"] = current_net_edge * current_size
+        position["current_executable_size"] = current_size
+        position["edge_change"] = current_net_edge - float(position.get("entry_net_edge") or 0.0)
+        updated.append(position)
+
+    save_portfolio(portfolio_path, portfolio)
+    return {
+        "updated_count": len(updated),
+        "stale_count": len(stale),
+        "updated": updated,
+        "stale": stale,
+        "portfolio": portfolio_summary(portfolio),
+    }
+
+
 def _opportunity_key(item: dict) -> str:
     return "|".join(
         str(item.get(field) or "")

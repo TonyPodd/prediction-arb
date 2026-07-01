@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close
+from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 
 
@@ -76,6 +76,19 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(result["portfolio"]["open_count"], 0)
         self.assertEqual(result["portfolio"]["closed_count"], 1)
         self.assertEqual(result["portfolio"]["realized_pnl"], 1.5)
+
+    def test_paper_sync_updates_current_marks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            monitor = Path(tmp) / "monitor.jsonl"
+            portfolio = Path(tmp) / "portfolio.json"
+            write_monitor(monitor)
+            initialize_portfolio(portfolio, {"limitless": 100, "polymarket": 100})
+            paper_enter_from_monitor(monitor, portfolio)
+
+            result = paper_sync_from_monitor(monitor, portfolio)
+
+        self.assertEqual(result["updated_count"], 1)
+        self.assertEqual(result["portfolio"]["current_estimated_profit"], 2.0)
 
     def test_portfolio_summary(self) -> None:
         summary = portfolio_summary({"cash": {"limitless": 1}, "inventory": {}, "open_positions": [], "closed_positions": [], "rejected": []})

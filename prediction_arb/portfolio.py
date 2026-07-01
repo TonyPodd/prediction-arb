@@ -54,6 +54,7 @@ def portfolio_summary(portfolio: dict) -> dict:
         "rejected_count": len(portfolio.get("rejected") or []),
         "open_notional": sum(float(item.get("buy_cash_required") or 0.0) for item in open_positions),
         "open_estimated_profit": sum(float(item.get("entry_estimated_profit") or 0.0) for item in open_positions),
+        "current_estimated_profit": sum(float(item.get("current_estimated_profit") or item.get("entry_estimated_profit") or 0.0) for item in open_positions),
         "realized_pnl": sum(float(item.get("realized_pnl") or 0.0) for item in closed_positions),
         "open_positions": open_positions,
         "closed_positions": closed_positions,
