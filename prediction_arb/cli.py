@@ -11,7 +11,7 @@ from urllib import request
 
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
-from prediction_arb.monitor import build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
 from prediction_arb.reporting import summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
@@ -104,12 +104,19 @@ def main() -> None:
     monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
     monitor_parser.add_argument("--webhook-url", help="POST new-opportunity alerts to this webhook URL.")
     monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
+    monitor_parser.add_argument("--telegram-bot-token", help="Telegram bot token. Prefer env expansion, not hardcoding.")
+    monitor_parser.add_argument("--telegram-chat-id", help="Telegram chat id where new-opportunity alerts are sent.")
     monitor_parser.add_argument("--stop-on-error", action="store_true", help="Exit instead of appending an error snapshot when a scan fails.")
 
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
     report_parser.add_argument("--input", type=Path, required=True)
     report_parser.add_argument("--top", type=int, default=10)
     report_parser.add_argument("--output", type=Path)
+
+    telegram_test_parser = subparsers.add_parser("telegram-test", help="Send a test Telegram message.")
+    telegram_test_parser.add_argument("--bot-token", required=True)
+    telegram_test_parser.add_argument("--chat-id", required=True)
+    telegram_test_parser.add_argument("--message", default="prediction-arb Telegram alerts are configured")
 
     args = parser.parse_args()
     if args.command == "scan":
@@ -132,6 +139,8 @@ def main() -> None:
         _monitor(args)
     elif args.command == "monitor-report":
         _monitor_report(args)
+    elif args.command == "telegram-test":
+        _telegram_test(args)
 
 
 def _scan(args: argparse.Namespace) -> None:
@@ -355,6 +364,11 @@ def _monitor_report(args: argparse.Namespace) -> None:
     _write_or_print([payload], args.output)
 
 
+def _telegram_test(args: argparse.Namespace) -> None:
+    _post_json(_telegram_send_message_url(args.bot_token), build_telegram_payload(args.chat_id, args.message))
+    print("Telegram test message sent.")
+
+
 def _monitor_error_payload(query: str, exc: Exception) -> dict:
     return {
         "type": "error",
@@ -410,6 +424,15 @@ def _send_monitor_alert_if_needed(snapshot: object, args: argparse.Namespace) ->
     if args.webhook_url:
         payload = build_webhook_payload(alert_text, args.webhook_format)
         _post_json(args.webhook_url, payload)
+    if args.telegram_bot_token or args.telegram_chat_id:
+        if not args.telegram_bot_token or not args.telegram_chat_id:
+            raise ValueError("Both --telegram-bot-token and --telegram-chat-id are required for Telegram alerts.")
+        payload = build_telegram_payload(args.telegram_chat_id, alert_text)
+        _post_json(_telegram_send_message_url(args.telegram_bot_token), payload)
+
+
+def _telegram_send_message_url(bot_token: str) -> str:
+    return f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
 
 def _post_json(url: str, payload: dict[str, object]) -> None:

@@ -89,3 +89,11 @@ def build_webhook_payload(text: str, webhook_format: str) -> dict[str, str]:
     if webhook_format == "discord":
         return {"content": text}
     return {"text": text}
+
+
+def build_telegram_payload(chat_id: str, text: str) -> dict[str, object]:
+    return {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }

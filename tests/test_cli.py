@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prediction_arb.cli import _load_monitor_keys, _monitor_error_payload
+from prediction_arb.cli import _load_monitor_keys, _monitor_error_payload, _telegram_send_message_url
 
 
 class CliTests(unittest.TestCase):
@@ -35,6 +35,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["type"], "error")
         self.assertEqual(payload["query"], "taiwan")
         self.assertEqual(payload["error"], "RuntimeError: boom")
+
+    def test_telegram_send_message_url(self) -> None:
+        self.assertEqual(_telegram_send_message_url("TOKEN"), "https://api.telegram.org/botTOKEN/sendMessage")
 
 
 if __name__ == "__main__":

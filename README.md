@@ -79,12 +79,19 @@ Monitor live depth opportunities and append snapshots to JSONL:
 python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --fee-bps 10 --interval 30 --output data/monitor-taiwan.jsonl
 python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --iterations 1 --print-snapshots
 python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --alert-new --webhook-format discord --webhook-url "$DISCORD_WEBHOOK_URL"
+python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --telegram-bot-token "$TELEGRAM_BOT_TOKEN" --telegram-chat-id "$TELEGRAM_CHAT_ID"
 ```
 
 Summarize monitor history:
 
 ```bash
 python -m prediction_arb.cli monitor-report --input data/monitor-taiwan.jsonl --top 10
+```
+
+Test Telegram alerts:
+
+```bash
+python -m prediction_arb.cli telegram-test --bot-token "$TELEGRAM_BOT_TOKEN" --chat-id "$TELEGRAM_CHAT_ID"
 ```
 
 Candidate output includes parsed conditions:
@@ -108,7 +115,7 @@ deadline: UTC minute when available
 - `depth-sweep` repeats depth scanning across multiple share sizes and reports best net edge/profit per size.
 - `depth-max` searches a geometric size grid and returns the largest size that still passes `--min-net-edge`.
 - Fee estimates are per-share. Polymarket fees are zero when `feesEnabled=false`; otherwise the scanner uses `rate * price * (1 - price)` from `feeSchedule` or the documented taker fallback. Limitless exposes fee flags but not the full curve in the market payload, so use `--fee-bps` as a conservative manual overlay.
-- `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. If the JSONL file already exists, the next run resumes comparison from the last saved `active_keys`. Use `--alert-new` for compact terminal alerts, or `--webhook-url` for JSON webhook alerts. Temporary scan failures are stored as error snapshots; use `--stop-on-error` for strict debugging.
+- `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. If the JSONL file already exists, the next run resumes comparison from the last saved `active_keys`. Use `--alert-new` for compact terminal alerts, `--webhook-url` for JSON webhook alerts, or `--telegram-bot-token` plus `--telegram-chat-id` for Telegram alerts. Temporary scan failures are stored as error snapshots; use `--stop-on-error` for strict debugging.
 - `monitor-report` summarizes JSONL history, counts error snapshots, and ranks routes by the best observed net edge.
 - `fee_notes` explains which fee assumptions were applied. `--include-filtered` includes rejected candidates with a reason.
 - Any reported opportunity should be treated as a candidate for research, not as a trade signal.

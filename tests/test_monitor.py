@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from prediction_arb.models import DepthCandidate, ExecutionQuote, Market, MonitorSnapshot, TopOfBook
-from prediction_arb.monitor import _opportunity_key, build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.monitor import _opportunity_key, build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
 
 
 def candidate(outcome: str, buy_id: str, sell_id: str) -> DepthCandidate:
@@ -96,6 +96,12 @@ class MonitorTests(unittest.TestCase):
     def test_webhook_payload_formats(self) -> None:
         self.assertEqual(build_webhook_payload("hello", "generic"), {"text": "hello"})
         self.assertEqual(build_webhook_payload("hello", "discord"), {"content": "hello"})
+
+    def test_telegram_payload_format(self) -> None:
+        self.assertEqual(
+            build_telegram_payload("123", "hello"),
+            {"chat_id": "123", "text": "hello", "disable_web_page_preview": True},
+        )
 
 
 if __name__ == "__main__":
