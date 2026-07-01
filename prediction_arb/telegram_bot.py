@@ -6,9 +6,11 @@ from pathlib import Path
 from urllib import request
 
 from prediction_arb.capital import plan_capital
+from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
+from prediction_arb.sources import limitless, polymarket
 
 
 def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | None = None, poll_interval: float = 2.0) -> None:
@@ -41,6 +43,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "/status [file]\n"
             "/report [file]\n"
             "/capital [limitless_cash] [polymarket_cash] [file]\n"
+            "/coverage [limit] [hours] [category]\n"
             "/portfolio\n"
             "/paper_enter [file] [max]\n"
             "/paper_sync [file]\n"
@@ -93,6 +96,19 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         for item in plan["allocated"][:5]:
             lines.append(f"- {item['outcome']} {item['route']} cash=${item['buy_cash_required']:.2f} profit=${item['estimated_profit']:.2f}")
         return "\n".join(lines)
+    if command == "/coverage":
+        limit = int(_float(parts[1])) if len(parts) > 1 and _float(parts[1]) > 0 else 1000
+        max_hours = _float(parts[2]) if len(parts) > 2 and _float(parts[2]) > 0 else 24.0
+        category = parts[3] if len(parts) > 3 else ""
+        limitless_markets = limitless.fetch_markets(limit=limit)
+        polymarket_markets = polymarket.fetch_markets(limit=limit)
+        if category:
+            limitless_markets = _filter_by_category(limitless_markets, category)
+            polymarket_markets = _filter_by_category(polymarket_markets, category)
+        limitless_markets = _filter_by_max_close_hours(limitless_markets, max_hours)
+        polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_hours)
+        coverage = summarize_source_coverage(limitless_markets, polymarket_markets, example_limit=0)
+        return _format_coverage(coverage, limit=limit, max_hours=max_hours, category=category)
     if command == "/portfolio":
         summary = portfolio_summary(load_portfolio(Path("data/portfolio.json")))
         return (
@@ -167,3 +183,79 @@ def _float(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _format_coverage(coverage: dict[str, object], *, limit: int, max_hours: float, category: str) -> str:
+    sources = coverage.get("sources", {}) if isinstance(coverage, dict) else {}
+    lines = [
+        "Source coverage",
+        f"limit={limit} max_hours={max_hours:g}" + (f" category={category}" if category else ""),
+    ]
+    for name in ("limitless", "polymarket"):
+        source = sources.get(name, {}) if isinstance(sources, dict) else {}
+        lines.append(
+            f"{name}: markets={source.get('count', 0)} short24h={source.get('short_term_24h_count', 0)} "
+            f"kinds={_compact_counts(source.get('by_condition_kind', {}))}"
+        )
+        lines.append(
+            f"  assets={_compact_counts(source.get('by_asset', {}), limit=5)} "
+            f"intervals={_compact_counts(source.get('by_interval_minutes', {}), limit=5)}"
+        )
+    return "\n".join(lines)
+
+
+def _compact_counts(value: object, *, limit: int = 4) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    return ", ".join(f"{key}:{count}" for key, count in list(value.items())[:limit])
+
+
+def _filter_by_category(markets: list, category: str) -> list:
+    tokens = _tokens(category)
+    if not tokens:
+        return markets
+    return [market for market in markets if tokens <= _tokens(_market_text(market))]
+
+
+def _filter_by_max_close_hours(markets: list, max_close_hours: float) -> list:
+    from datetime import datetime, timezone
+
+    now = datetime.now(tz=timezone.utc)
+    rows = []
+    for market in markets:
+        close_time = getattr(market, "close_time", None)
+        if not close_time:
+            continue
+        try:
+            close_at = datetime.fromisoformat(str(close_time).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if close_at.tzinfo is None:
+            close_at = close_at.replace(tzinfo=timezone.utc)
+        hours = (close_at.astimezone(timezone.utc) - now).total_seconds() / 3600.0
+        if 0 <= hours <= max_close_hours:
+            rows.append(market)
+    return rows
+
+
+def _market_text(market: object) -> str:
+    raw = getattr(market, "raw", {}) or {}
+    return " ".join(
+        str(item)
+        for item in [
+            getattr(market, "title", ""),
+            raw.get("description", ""),
+            raw.get("slug", ""),
+            " ".join(str(item) for item in raw.get("categories", []) if item),
+            " ".join(str(item) for item in raw.get("tags", []) if item),
+            str(raw.get("groupItemTitle") or ""),
+        ]
+        if item
+    )
+
+
+def _tokens(value: str) -> set[str]:
+    import re
+
+    aliases = {"bitcoin": "btc", "ethereum": "eth"}
+    return {aliases.get(token, token) for token in re.findall(r"[a-z0-9]+", value.lower()) if len(token) > 2}
