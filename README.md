@@ -73,6 +73,13 @@ Inspect fee assumptions for matching markets:
 python -m prediction_arb.cli fees --query taiwan --limit 20 --prices 0.05,0.5,0.95
 ```
 
+Monitor live depth opportunities and append snapshots to JSONL:
+
+```bash
+python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --fee-bps 10 --interval 30 --output data/monitor-taiwan.jsonl
+python -m prediction_arb.cli monitor --query taiwan --limit 20 --size 100 --iterations 1 --print-snapshots
+```
+
 Candidate output includes parsed conditions:
 
 ```text
@@ -94,6 +101,7 @@ deadline: UTC minute when available
 - `depth-sweep` repeats depth scanning across multiple share sizes and reports best net edge/profit per size.
 - `depth-max` searches a geometric size grid and returns the largest size that still passes `--min-net-edge`.
 - Fee estimates are per-share. Polymarket fees are zero when `feesEnabled=false`; otherwise the scanner uses `rate * price * (1 - price)` from `feeSchedule` or the documented taker fallback. Limitless exposes fee flags but not the full curve in the market payload, so use `--fee-bps` as a conservative manual overlay.
+- `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. If the JSONL file already exists, the next run resumes comparison from the last saved `active_keys`.
 - `fee_notes` explains which fee assumptions were applied. `--include-filtered` includes rejected candidates with a reason.
 - Any reported opportunity should be treated as a candidate for research, not as a trade signal.
 

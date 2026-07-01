@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import time
 from dataclasses import asdict
 from pathlib import Path
 
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
+from prediction_arb.monitor import monitor_once
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
 
@@ -84,6 +86,19 @@ def main() -> None:
     fees_parser.add_argument("--prices", default="0.05,0.5,0.95")
     fees_parser.add_argument("--output", type=Path)
 
+    monitor_parser = subparsers.add_parser("monitor", help="Repeatedly scan depth opportunities and append snapshots to JSONL.")
+    monitor_parser.add_argument("--query", required=True)
+    monitor_parser.add_argument("--limit", type=int, default=50)
+    monitor_parser.add_argument("--size", type=float, default=100.0)
+    monitor_parser.add_argument("--interval", type=float, default=30.0)
+    monitor_parser.add_argument("--iterations", type=int, default=0, help="0 means run until interrupted.")
+    monitor_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    monitor_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    monitor_parser.add_argument("--fee-bps", type=float, default=0.0)
+    monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
+    monitor_parser.add_argument("--output", type=Path, default=Path("data/monitor.jsonl"))
+    monitor_parser.add_argument("--print-snapshots", action="store_true")
+
     args = parser.parse_args()
     if args.command == "scan":
         _scan(args)
@@ -101,6 +116,8 @@ def main() -> None:
         _depth_max(args)
     elif args.command == "fees":
         _fees(args)
+    elif args.command == "monitor":
+        _monitor(args)
 
 
 def _scan(args: argparse.Namespace) -> None:
@@ -275,6 +292,42 @@ def _fees(args: argparse.Namespace) -> None:
     _write_or_print(rows, args.output)
 
 
+def _monitor(args: argparse.Namespace) -> None:
+    previous_keys = _load_monitor_keys(args.output)
+    iteration = 0
+    try:
+        while True:
+            iteration += 1
+            limitless_markets = _fetch_limitless(args.limit, args.query)
+            polymarket_markets = _fetch_polymarket(args.limit, args.query)
+            snapshot, previous_keys = monitor_once(
+                query=args.query,
+                limitless_markets=limitless_markets,
+                polymarket_markets=polymarket_markets,
+                previous_keys=previous_keys,
+                size=args.size,
+                min_net_edge=args.min_net_edge,
+                safety_buffer=args.safety_buffer,
+                min_match_score=args.min_match_score,
+                fee_bps=args.fee_bps,
+            )
+            payload = _serializable(asdict(snapshot))
+            _append_jsonl(payload, args.output)
+            if args.print_snapshots:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(
+                    f"{snapshot.detected_at.isoformat()} "
+                    f"active={snapshot.opportunity_count} new={snapshot.new_count} gone={snapshot.gone_count}"
+                )
+
+            if args.iterations and iteration >= args.iterations:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("Monitor stopped.")
+
+
 def _write_or_print(payload: list[dict], output: Path | None) -> None:
     text = json.dumps(payload, indent=2, ensure_ascii=False)
     if output:
@@ -283,6 +336,33 @@ def _write_or_print(payload: list[dict], output: Path | None) -> None:
         print(f"Wrote {len(payload)} rows to {output}")
         return
     print(text)
+
+
+def _append_jsonl(payload: object, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _load_monitor_keys(output: Path) -> set[str]:
+    if not output.exists():
+        return set()
+    last_line = ""
+    with output.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                last_line = line
+    if not last_line:
+        return set()
+    try:
+        payload = json.loads(last_line)
+    except json.JSONDecodeError:
+        return set()
+    keys = payload.get("active_keys", [])
+    if not isinstance(keys, list):
+        return set()
+    return {str(item) for item in keys}
 
 
 def _market_dict(market: object, include_raw: bool) -> dict:

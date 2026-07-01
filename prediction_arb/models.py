@@ -143,3 +143,17 @@ class DepthMaxResult:
     max_passing_size: float | None
     best_at_max_size: DepthCandidate | None
     checked_sizes: list[DepthSweepRow]
+
+
+@dataclass(frozen=True)
+class MonitorSnapshot:
+    query: str
+    size: float
+    detected_at: datetime
+    opportunity_count: int
+    new_count: int
+    gone_count: int
+    active_keys: list[str]
+    new_keys: list[str]
+    gone_keys: list[str]
+    opportunities: list[DepthCandidate]
