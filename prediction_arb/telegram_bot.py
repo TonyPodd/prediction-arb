@@ -5,7 +5,8 @@ import time
 from pathlib import Path
 from urllib import request
 
-from prediction_arb.reporting import summarize_monitor_history
+from prediction_arb.capital import plan_capital
+from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 
 
 def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | None = None, poll_interval: float = 2.0) -> None:
@@ -30,11 +31,24 @@ def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | 
 
 
 def handle_bot_command(text: str, monitor_file: Path) -> str | None:
-    command = text.split()[0].lower()
+    parts = text.split()
+    command = parts[0].lower()
     if command in ("/start", "/help"):
-        return "Commands: /status, /report, /help"
+        return (
+            "Commands:\n"
+            "/status [file]\n"
+            "/report [file]\n"
+            "/capital [limitless_cash] [polymarket_cash] [file]\n"
+            "/files\n"
+            "/help"
+        )
+    if command == "/files":
+        files = sorted(Path("data").glob("monitor*.jsonl"))
+        if not files:
+            return "No monitor JSONL files found."
+        return "Monitor files:\n" + "\n".join(f"- {path.name}" for path in files[:20])
     if command == "/status":
-        summary = summarize_monitor_history(monitor_file, top=3)
+        summary = summarize_monitor_history(_command_file(parts, monitor_file), top=3)
         return (
             f"Monitor status\n"
             f"file: {summary['input']}\n"
@@ -43,7 +57,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"last_success: {summary['last_success_detected_at']}"
         )
     if command == "/report":
-        summary = summarize_monitor_history(monitor_file, top=5)
+        summary = summarize_monitor_history(_command_file(parts, monitor_file), top=5)
         lines = [
             "Best routes",
             f"active={summary['latest_active_count']} errors={summary['error_snapshots']}",
@@ -54,6 +68,25 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             lines.append(f"- {item['outcome']} {item['route']} edge={net_edge:.4f} profit=${profit:.2f}")
         if summary["last_error"]:
             lines.append(f"last_error: {summary['last_error']}")
+        return "\n".join(lines)
+    if command == "/capital":
+        limitless_cash = _float(parts[1]) if len(parts) > 1 else 250.0
+        polymarket_cash = _float(parts[2]) if len(parts) > 2 else 250.0
+        path = _file_from_name(parts[3]) if len(parts) > 3 else monitor_file
+        plan = plan_capital(
+            latest_opportunities(path),
+            {"limitless": limitless_cash, "polymarket": polymarket_cash},
+            assume_sell_inventory=True,
+        )
+        lines = [
+            "Capital plan",
+            f"file: {path}",
+            f"allocated={plan['allocated_count']} rejected={plan['rejected_count']}",
+            f"cash_used=${plan['total_buy_cash_required']:.2f} est_profit=${plan['total_estimated_profit']:.2f}",
+            f"left limitless=${plan['cash_remaining'].get('limitless', 0):.2f} polymarket=${plan['cash_remaining'].get('polymarket', 0):.2f}",
+        ]
+        for item in plan["allocated"][:5]:
+            lines.append(f"- {item['outcome']} {item['route']} cash=${item['buy_cash_required']:.2f} profit=${item['estimated_profit']:.2f}")
         return "\n".join(lines)
     return None
 
@@ -80,3 +113,23 @@ def _telegram_api(bot_token: str, method: str, payload: dict[str, object]) -> di
     )
     with request.urlopen(http_request, timeout=35) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _command_file(parts: list[str], default: Path) -> Path:
+    return _file_from_name(parts[1]) if len(parts) > 1 else default
+
+
+def _file_from_name(value: str) -> Path:
+    path = Path(value)
+    if path.parent == Path("."):
+        path = Path("data") / value
+    if path.is_absolute() or ".." in path.parts:
+        return Path("data/monitor-taiwan.jsonl")
+    return path
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

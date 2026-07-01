@@ -10,11 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
+from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
 from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
-from prediction_arb.reporting import summarize_monitor_history
+from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
 from prediction_arb.telegram_bot import run_telegram_bot
@@ -123,6 +124,14 @@ def main() -> None:
     report_parser.add_argument("--top", type=int, default=10)
     report_parser.add_argument("--output", type=Path)
 
+    capital_parser = subparsers.add_parser("capital-plan", help="Plan capital allocation across latest monitor opportunities.")
+    capital_parser.add_argument("--input", type=Path, required=True)
+    capital_parser.add_argument("--cash", default="limitless=250,polymarket=250")
+    capital_parser.add_argument("--inventory", default="")
+    capital_parser.add_argument("--require-sell-inventory", action="store_true")
+    capital_parser.add_argument("--max-allocations", type=int, default=10)
+    capital_parser.add_argument("--output", type=Path)
+
     telegram_test_parser = subparsers.add_parser("telegram-test", help="Send a test Telegram message.")
     telegram_test_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     telegram_test_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
@@ -137,7 +146,7 @@ def main() -> None:
     dashboard_parser = subparsers.add_parser("dashboard", help="Serve local monitor dashboard.")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8765)
-    dashboard_parser.add_argument("--input", type=Path, default=Path("data/monitor-taiwan.jsonl"))
+    dashboard_parser.add_argument("--input", type=Path, default=Path("data/monitor-short-all.jsonl"))
 
     args = parser.parse_args()
     if args.command == "scan":
@@ -160,6 +169,8 @@ def main() -> None:
         _monitor(args)
     elif args.command == "monitor-report":
         _monitor_report(args)
+    elif args.command == "capital-plan":
+        _capital_plan(args)
     elif args.command == "telegram-test":
         _telegram_test(args)
     elif args.command == "telegram-bot":
@@ -389,6 +400,17 @@ def _monitor(args: argparse.Namespace) -> None:
 
 def _monitor_report(args: argparse.Namespace) -> None:
     payload = summarize_monitor_history(args.input, top=args.top)
+    _write_or_print([payload], args.output)
+
+
+def _capital_plan(args: argparse.Namespace) -> None:
+    payload = plan_capital(
+        latest_opportunities(args.input),
+        parse_balances(args.cash),
+        parse_inventory(args.inventory),
+        assume_sell_inventory=not args.require_sell_inventory,
+        max_allocations=args.max_allocations,
+    )
     _write_or_print([payload], args.output)
 
 

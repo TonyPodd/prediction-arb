@@ -49,6 +49,15 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
     }
 
 
+def latest_opportunities(path: Path) -> list[dict]:
+    snapshots = read_monitor_history(path)
+    for snapshot in reversed(snapshots):
+        if snapshot.get("type") == "error":
+            continue
+        return list(snapshot.get("opportunities", []))
+    return []
+
+
 def read_monitor_history(path: Path) -> list[dict]:
     rows = []
     if not path.exists():
