@@ -56,3 +56,36 @@ def _opportunity_key(candidate: DepthCandidate) -> str:
             candidate.sell_market_id,
         ]
     )
+
+
+def format_new_opportunity_alert(snapshot: MonitorSnapshot, max_items: int = 5) -> str | None:
+    if not snapshot.new_keys:
+        return None
+
+    opportunities_by_key = {_opportunity_key(item): item for item in snapshot.opportunities}
+    lines = [
+        f"New prediction-arb opportunities for '{snapshot.query}': {snapshot.new_count}",
+        f"size={snapshot.size:g} detected_at={snapshot.detected_at.isoformat()}",
+    ]
+    for key in snapshot.new_keys[:max_items]:
+        item = opportunities_by_key.get(key)
+        if item is None:
+            lines.append(f"- {key}")
+            continue
+        net_edge = item.net_edge if item.net_edge is not None else 0.0
+        profit = net_edge * item.executable_size
+        lines.append(
+            "- "
+            f"{item.outcome} {item.buy_source}->{item.sell_source} "
+            f"net_edge={net_edge:.4f} size={item.executable_size:g} est_profit={profit:.4f}"
+        )
+    remaining = len(snapshot.new_keys) - max_items
+    if remaining > 0:
+        lines.append(f"... and {remaining} more")
+    return "\n".join(lines)
+
+
+def build_webhook_payload(text: str, webhook_format: str) -> dict[str, str]:
+    if webhook_format == "discord":
+        return {"content": text}
+    return {"text": text}

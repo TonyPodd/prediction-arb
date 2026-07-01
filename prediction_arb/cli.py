@@ -6,10 +6,11 @@ import re
 import time
 from dataclasses import asdict
 from pathlib import Path
+from urllib import request
 
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
-from prediction_arb.monitor import monitor_once
+from prediction_arb.monitor import build_webhook_payload, format_new_opportunity_alert, monitor_once
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
 
@@ -98,6 +99,9 @@ def main() -> None:
     monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
     monitor_parser.add_argument("--output", type=Path, default=Path("data/monitor.jsonl"))
     monitor_parser.add_argument("--print-snapshots", action="store_true")
+    monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
+    monitor_parser.add_argument("--webhook-url", help="POST new-opportunity alerts to this webhook URL.")
+    monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
 
     args = parser.parse_args()
     if args.command == "scan":
@@ -320,6 +324,7 @@ def _monitor(args: argparse.Namespace) -> None:
                     f"{snapshot.detected_at.isoformat()} "
                     f"active={snapshot.opportunity_count} new={snapshot.new_count} gone={snapshot.gone_count}"
                 )
+            _send_monitor_alert_if_needed(snapshot, args)
 
             if args.iterations and iteration >= args.iterations:
                 break
@@ -363,6 +368,29 @@ def _load_monitor_keys(output: Path) -> set[str]:
     if not isinstance(keys, list):
         return set()
     return {str(item) for item in keys}
+
+
+def _send_monitor_alert_if_needed(snapshot: object, args: argparse.Namespace) -> None:
+    alert_text = format_new_opportunity_alert(snapshot)
+    if alert_text is None:
+        return
+    if args.alert_new:
+        print(alert_text)
+    if args.webhook_url:
+        payload = build_webhook_payload(alert_text, args.webhook_format)
+        _post_json(args.webhook_url, payload)
+
+
+def _post_json(url: str, payload: dict[str, object]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    http_request = request.Request(
+        url=url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(http_request, timeout=10) as response:
+        response.read()
 
 
 def _market_dict(market: object, include_raw: bool) -> dict:

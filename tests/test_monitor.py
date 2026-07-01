@@ -4,8 +4,8 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from prediction_arb.models import DepthCandidate, ExecutionQuote, Market, TopOfBook
-from prediction_arb.monitor import _opportunity_key, monitor_once
+from prediction_arb.models import DepthCandidate, ExecutionQuote, Market, MonitorSnapshot, TopOfBook
+from prediction_arb.monitor import _opportunity_key, build_webhook_payload, format_new_opportunity_alert, monitor_once
 
 
 def candidate(outcome: str, buy_id: str, sell_id: str) -> DepthCandidate:
@@ -53,6 +53,49 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(snapshot.new_keys, ["YES|polymarket|p2|limitless|l2"])
         self.assertEqual(snapshot.gone_keys, ["YES|polymarket|p1|limitless|l1"])
         self.assertEqual(active_keys, {"YES|polymarket|p2|limitless|l2"})
+
+    def test_format_new_opportunity_alert_summarizes_new_routes(self) -> None:
+        item = candidate("YES", "p1", "l1")
+        key = _opportunity_key(item)
+        snapshot = MonitorSnapshot(
+            query="taiwan",
+            size=100,
+            detected_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            opportunity_count=1,
+            new_count=1,
+            gone_count=0,
+            active_keys=[key],
+            new_keys=[key],
+            gone_keys=[],
+            opportunities=[item],
+        )
+
+        text = format_new_opportunity_alert(snapshot)
+
+        self.assertIsNotNone(text)
+        self.assertIn("New prediction-arb opportunities", text or "")
+        self.assertIn("YES polymarket->limitless", text or "")
+        self.assertIn("net_edge=0.0100", text or "")
+
+    def test_format_new_opportunity_alert_returns_none_without_new_keys(self) -> None:
+        snapshot = MonitorSnapshot(
+            query="taiwan",
+            size=100,
+            detected_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            opportunity_count=0,
+            new_count=0,
+            gone_count=0,
+            active_keys=[],
+            new_keys=[],
+            gone_keys=[],
+            opportunities=[],
+        )
+
+        self.assertIsNone(format_new_opportunity_alert(snapshot))
+
+    def test_webhook_payload_formats(self) -> None:
+        self.assertEqual(build_webhook_payload("hello", "generic"), {"text": "hello"})
+        self.assertEqual(build_webhook_payload("hello", "discord"), {"content": "hello"})
 
 
 if __name__ == "__main__":
