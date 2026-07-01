@@ -6,9 +6,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
+from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
+from prediction_arb.sources import limitless, polymarket
 
 
 DEFAULT_MONITOR_FILE = Path("data/monitor-short-all.jsonl")
@@ -57,6 +59,21 @@ def _handler(default_input: Path):
                     query = parse_qs(parsed.query)
                     path = _safe_monitor_path(query.get("portfolio", ["data/portfolio.json"])[0])
                     self._send_json(portfolio_summary(load_portfolio(path)))
+                    return
+                if parsed.path == "/api/coverage":
+                    query = parse_qs(parsed.query)
+                    limit = _int(query.get("limit", ["100"])[0], default=100)
+                    category = query.get("category", [""])[0]
+                    max_close_hours = _float(query.get("max_close_hours", [""])[0])
+                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    if category:
+                        limitless_markets = _filter_by_category(limitless_markets, category)
+                        polymarket_markets = _filter_by_category(polymarket_markets, category)
+                    if max_close_hours is not None:
+                        limitless_markets = _filter_by_max_close_hours(limitless_markets, max_close_hours)
+                        polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_close_hours)
+                    self._send_json(summarize_source_coverage(limitless_markets, polymarket_markets))
                     return
                 if parsed.path == "/api/paper-enter":
                     query = parse_qs(parsed.query)
@@ -124,6 +141,66 @@ def _bool(value: object) -> bool:
     return str(value).lower() in {"1", "true", "yes", "on"}
 
 
+def _float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_by_category(markets: list, category: str) -> list:
+    tokens = _tokens(category)
+    if not tokens:
+        return markets
+    return [market for market in markets if tokens <= _tokens(_market_text(market))]
+
+
+def _filter_by_max_close_hours(markets: list, max_close_hours: float) -> list:
+    from datetime import datetime, timezone
+
+    now = datetime.now(tz=timezone.utc)
+    rows = []
+    for market in markets:
+        close_time = getattr(market, "close_time", None)
+        if not close_time:
+            continue
+        try:
+            close_at = datetime.fromisoformat(str(close_time).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if close_at.tzinfo is None:
+            close_at = close_at.replace(tzinfo=timezone.utc)
+        hours = (close_at.astimezone(timezone.utc) - now).total_seconds() / 3600.0
+        if 0 <= hours <= max_close_hours:
+            rows.append(market)
+    return rows
+
+
+def _market_text(market: object) -> str:
+    raw = getattr(market, "raw", {}) or {}
+    return " ".join(
+        str(item)
+        for item in [
+            getattr(market, "title", ""),
+            raw.get("description", ""),
+            raw.get("slug", ""),
+            " ".join(str(item) for item in raw.get("categories", []) if item),
+            " ".join(str(item) for item in raw.get("tags", []) if item),
+            str(raw.get("groupItemTitle") or ""),
+        ]
+        if item
+    )
+
+
+def _tokens(value: str) -> set[str]:
+    import re
+
+    aliases = {"bitcoin": "btc", "ethereum": "eth"}
+    return {aliases.get(token, token) for token in re.findall(r"[a-z0-9]+", value.lower()) if len(token) > 2}
+
+
 _DASHBOARD_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -171,11 +248,14 @@ _DASHBOARD_HTML = r"""<!doctype html>
     .event { border-left: 3px solid var(--blue); padding: 8px 10px; background: #fbfcfd; }
     .event.error { border-left-color: var(--red); }
     .planner { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; align-items: end; }
+    .coverage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: #fbfcfd; font-size: 12px; }
     .switch { display: flex; align-items: center; gap: 7px; height: 34px; color: var(--muted); }
     .switch input { height: auto; min-width: auto; }
     @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-      .grid, .planner { grid-template-columns: 1fr; }
+      .grid, .planner, .coverage-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -189,6 +269,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <button class="tab active" data-view="overview">Overview</button>
       <button class="tab" data-view="capital">Capital Planner</button>
       <button class="tab" data-view="portfolio">Paper Portfolio</button>
+      <button class="tab" data-view="coverage">Source Coverage</button>
       <button class="tab" data-view="events">Events</button>
     </div>
   </header>
@@ -272,10 +353,26 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <table><thead><tr><th>Route</th><th>Cash</th><th>Inventory</th><th>Entry Edge</th><th>Est. Profit</th><th>Opened</th></tr></thead><tbody id="portfolioTable"></tbody></table>
       </div>
     </section>
+
+    <section class="view" id="coverage">
+      <div class="panel">
+        <h2>Source Coverage</h2>
+        <div class="planner">
+          <label><div class="label">Category filter</div><input id="coverageCategory" value="crypto"></label>
+          <label><div class="label">Max close hours</div><input id="coverageHours" type="number" value="24" min="1"></label>
+          <label><div class="label">Fetch limit</div><input id="coverageLimit" type="number" value="200" min="10"></label>
+          <button class="primary" id="coverageRefreshBtn">Analyze</button>
+        </div>
+      </div>
+      <div class="coverage-grid">
+        <div class="panel"><h2>Limitless</h2><div id="coverageLimitless"></div></div>
+        <div class="panel"><h2>Polymarket</h2><div id="coveragePolymarket"></div></div>
+      </div>
+    </section>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -309,6 +406,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       state.snapshots = await json(`/api/snapshots?input=${q}&limit=300`);
       await refreshPlanner();
       await refreshPortfolio();
+      if (!state.coverage) await refreshCoverage();
       render();
     }
 
@@ -321,6 +419,13 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     async function refreshPortfolio() {
       state.portfolio = await json(`/api/portfolio?portfolio=${encodeURIComponent(el("portfolioPath").value || "data/portfolio.json")}`);
+    }
+
+    async function refreshCoverage() {
+      const category = encodeURIComponent(el("coverageCategory").value || "");
+      const hours = encodeURIComponent(el("coverageHours").value || "");
+      const limit = Number(el("coverageLimit").value || 200);
+      state.coverage = await json(`/api/coverage?category=${category}&max_close_hours=${hours}&limit=${limit}`);
     }
 
     async function paperEnter() {
@@ -353,6 +458,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderEvents(el("eventsFull"), state.snapshots.slice(-80).reverse());
       renderPlan(state.plan || {});
       renderPortfolio(state.portfolio || {});
+      renderCoverage(state.coverage || {});
       drawTrend(state.snapshots);
     }
 
@@ -398,6 +504,31 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <td class="num ok">${pct(row.current_net_edge ?? row.entry_net_edge)}</td><td class="num ok">${money(row.current_estimated_profit ?? row.entry_estimated_profit)}</td><td class="num">${row.market_status || "entry"}<br><span class="muted">${row.opened_at || ""}</span></td></tr>`).join("");
     }
 
+    function renderCoverage(coverage) {
+      const sources = coverage.sources || {};
+      renderCoverageSource("coverageLimitless", sources.limitless || {});
+      renderCoverageSource("coveragePolymarket", sources.polymarket || {});
+    }
+
+    function renderCoverageSource(targetId, source) {
+      const rows = source.examples || [];
+      el(targetId).innerHTML = `
+        <div class="metrics">
+          <div class="metric"><div class="label">Markets</div><div class="value">${source.count || 0}</div></div>
+          <div class="metric"><div class="label">Short-term 24h</div><div class="value">${source.short_term_24h_count || 0}</div></div>
+        </div>
+        <div class="chips">${chips(source.by_condition_kind || {}, "kind")}</div>
+        <div class="chips">${chips(source.by_asset || {}, "asset")}</div>
+        <div class="chips">${chips(source.by_interval_minutes || {}, "interval")}</div>
+        <table><thead><tr><th>Market</th><th>Kind</th><th>Asset</th><th>Interval</th><th>Close</th></tr></thead><tbody>
+          ${rows.map(row => `<tr><td>${escapeHtml(row.title || "")}</td><td>${(row.condition || {}).kind || ""}</td><td>${(row.condition || {}).asset || ""}</td><td class="num">${(row.condition || {}).interval_minutes || ""}</td><td class="num">${row.close_time || ""}</td></tr>`).join("")}
+        </tbody></table>`;
+    }
+
+    function chips(obj, label) {
+      return Object.entries(obj).map(([key, value]) => `<span class="chip">${label}: ${escapeHtml(key)} ${value}</span>`).join("");
+    }
+
     function renderEvents(target, rows) {
       target.innerHTML = rows.map(row => {
         if (row.type === "error") return `<div class="event error"><strong class="bad">Error</strong><br><span class="muted">${row.detected_at}</span><br>${escapeHtml(row.error || "")}</div>`;
@@ -431,6 +562,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("fileSelect").addEventListener("change", refresh);
     el("planBtn").addEventListener("click", () => refreshPlanner().then(render));
     el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
+    el("coverageRefreshBtn").addEventListener("click", () => refreshCoverage().then(render));
     el("paperEnterBtn").addEventListener("click", paperEnter);
     el("paperSyncBtn").addEventListener("click", paperSync);
     loadFiles().then(refresh).catch(err => { el("subtitle").textContent = err.message; });

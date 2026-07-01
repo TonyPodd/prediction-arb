@@ -48,6 +48,13 @@ Summarize match quality across topics:
 python -m prediction_arb.cli diagnose --query taiwan --query btc --query "bitcoin reserve" --limit 20
 ```
 
+Summarize live source coverage before scanning:
+
+```bash
+python -m prediction_arb.cli coverage --limit 200 --max-close-hours 24
+python -m prediction_arb.cli coverage --category crypto --limit 200 --max-close-hours 24
+```
+
 Scan executable depth for a target size:
 
 ```bash
@@ -134,6 +141,7 @@ kind: directional_up_down | threshold | outright_winner | dated_match_winner | n
 asset: btc | eth | sol | ...
 direction: above | below | up_or_down
 threshold: numeric threshold when available
+interval_minutes: recurring market interval when available
 deadline: UTC minute when available
 ```
 
@@ -143,7 +151,8 @@ deadline: UTC minute when available
 - Polymarket prices are usually decimal probabilities already.
 - Matching combines text overlap with basic structured condition checks and returns warnings. Similar-looking markets can still have different settlement rules or resolution sources.
 - Multi-word query filtering requires all query terms to appear in the market text.
-- `scan` rejects structurally mismatched pairs, including different condition types, assets, directions, thresholds, or semantic deadlines.
+- `scan` rejects structurally mismatched pairs, including different condition types, assets, directions, thresholds, recurring intervals, or semantic deadlines.
+- `coverage` shows what each source is actually returning by condition type, asset, interval, and close window. Use it when broad short-term scans are empty.
 - `depth-scan` fetches order books and estimates executable average buy/sell prices for a requested share size.
 - `depth-sweep` repeats depth scanning across multiple share sizes and reports best net edge/profit per size.
 - `depth-max` searches a geometric size grid and returns the largest size that still passes `--min-net-edge`.

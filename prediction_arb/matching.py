@@ -13,6 +13,7 @@ class Condition:
     asset: str | None
     direction: str | None
     threshold: float | None
+    interval_minutes: int | None
     deadline: str | None
 
 
@@ -110,6 +111,7 @@ def condition_from_market(market: Market) -> Condition:
         asset=_asset(text),
         direction=_direction(text, kind),
         threshold=_threshold(text),
+        interval_minutes=_interval_minutes(text),
         deadline=_semantic_deadline(text) or _deadline(market.close_time),
     )
 
@@ -203,6 +205,8 @@ def _condition_warnings(left: Condition, right: Condition) -> list[str]:
         warnings.append("direction_differs")
     if left.threshold is not None and right.threshold is not None and abs(left.threshold - right.threshold) > 0.01:
         warnings.append("threshold_differs")
+    if left.interval_minutes is not None and right.interval_minutes is not None and left.interval_minutes != right.interval_minutes:
+        warnings.append("interval_differs")
     if left.deadline and right.deadline and left.deadline != right.deadline:
         warnings.append("deadline_differs")
     return warnings
@@ -254,6 +258,25 @@ def _threshold(value: str) -> float | None:
     elif suffix == "b":
         number *= 1_000_000_000
     return number
+
+
+def _interval_minutes(value: str) -> int | None:
+    normalized = value.lower()
+    patterns = [
+        (r"\b(\d+)\s*(?:min|mins|minute|minutes)\b", 1),
+        (r"\b(\d+)\s*(?:h|hr|hrs|hour|hours)\b", 60),
+    ]
+    for pattern, multiplier in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            return int(match.group(1)) * multiplier
+    if re.search(r"\bhourly\b", normalized):
+        return 60
+    if re.search(r"\bdaily\b", normalized):
+        return 24 * 60
+    if re.search(r"\bweekly\b", normalized):
+        return 7 * 24 * 60
+    return None
 
 
 def _semantic_deadline(value: str) -> str | None:

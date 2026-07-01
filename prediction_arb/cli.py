@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib import request
 
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
+from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
@@ -55,6 +56,16 @@ def main() -> None:
     diagnose_parser.add_argument("--min-match-score", type=float, default=0.05)
     diagnose_parser.add_argument("--min-edge", type=float, default=0.005)
     diagnose_parser.add_argument("--output", type=Path)
+
+    coverage_parser = subparsers.add_parser("coverage", help="Summarize fetched source coverage by kind, asset, interval, and close window.")
+    coverage_parser.add_argument("--query", action="append", default=[])
+    coverage_parser.add_argument("--category", action="append", default=[])
+    coverage_parser.add_argument("--all-markets", action="store_true")
+    coverage_parser.add_argument("--limit", type=int, default=100)
+    coverage_parser.add_argument("--min-close-minutes", type=float)
+    coverage_parser.add_argument("--max-close-hours", type=float)
+    coverage_parser.add_argument("--examples", type=int, default=8)
+    coverage_parser.add_argument("--output", type=Path)
 
     depth_parser = subparsers.add_parser("depth-scan", help="Scan executable edge using orderbook depth.")
     depth_parser.add_argument("--query", required=True)
@@ -195,6 +206,8 @@ def main() -> None:
         _candidates(args)
     elif args.command == "diagnose":
         _diagnose(args)
+    elif args.command == "coverage":
+        _coverage(args)
     elif args.command == "depth-scan":
         _depth_scan(args)
     elif args.command == "depth-sweep":
@@ -326,6 +339,19 @@ def _diagnose(args: argparse.Namespace) -> None:
         )
 
     _write_or_print(rows, args.output)
+
+
+def _coverage(args: argparse.Namespace) -> None:
+    if not args.query and not args.category:
+        args.all_markets = True
+    limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+    payload = summarize_source_coverage(
+        limitless_markets,
+        polymarket_markets,
+        example_limit=args.examples,
+    )
+    payload["scope"] = _monitor_scope_label(args)
+    _write_or_print(payload, args.output)
 
 
 def _depth_scan(args: argparse.Namespace) -> None:
@@ -702,6 +728,8 @@ def _filter_by_close_window(markets: list, min_close_minutes: float | None, max_
         if close_at is None:
             continue
         minutes_to_close = (close_at - now).total_seconds() / 60.0
+        if minutes_to_close < 0:
+            continue
         if min_close_minutes is not None and minutes_to_close < min_close_minutes:
             continue
         if max_close_hours is not None and minutes_to_close > max_close_hours * 60.0:
@@ -745,6 +773,7 @@ def _has_hard_warnings(warnings: list[str]) -> bool:
             "asset_differs",
             "direction_differs",
             "threshold_differs",
+            "interval_differs",
             "deadline_differs",
         }
         & set(warnings)

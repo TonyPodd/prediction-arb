@@ -67,6 +67,14 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual([item.market_id for item in rows], ["near"])
 
+    def test_filter_by_close_window_rejects_already_closed_markets(self) -> None:
+        closed = Market("test", "closed", "Closed", None, (datetime.now(tz=timezone.utc) - timedelta(minutes=5)).isoformat(), None, None, TopOfBook(), {})
+        near = Market("test", "near", "Near", None, (datetime.now(tz=timezone.utc) + timedelta(hours=2)).isoformat(), None, None, TopOfBook(), {})
+
+        rows = _filter_by_close_window([closed, near], min_close_minutes=None, max_close_hours=24)
+
+        self.assertEqual([item.market_id for item in rows], ["near"])
+
     def test_filter_by_any_category_uses_tags_and_categories(self) -> None:
         crypto = Market("test", "crypto", "BTC Up or Down", None, None, None, None, TopOfBook(), {"categories": ["Crypto"], "tags": ["15 min"]})
         sports = Market("test", "sports", "Team wins", None, None, None, None, TopOfBook(), {"categories": ["Sports"]})

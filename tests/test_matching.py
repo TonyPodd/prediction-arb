@@ -51,7 +51,26 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(parsed.asset, "btc")
         self.assertEqual(parsed.deadline, "2026-end")
 
+    def test_directional_interval_matches(self) -> None:
+        left = market("limitless", "BTC Up or Down - 15 Min", "2026-07-01T18:15:00Z")
+        right = market("polymarket", "Bitcoin Up or Down - 15 minutes", "2026-07-01T18:15:00Z")
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.kind, "directional_up_down")
+        self.assertEqual(details.left_condition.asset, "btc")
+        self.assertEqual(details.left_condition.interval_minutes, 15)
+        self.assertEqual(details.right_condition.interval_minutes, 15)
+        self.assertNotIn("interval_differs", details.warnings)
+
+    def test_directional_interval_differs(self) -> None:
+        left = market("limitless", "BTC Up or Down - 5 Min", "2026-07-01T18:15:00Z")
+        right = market("polymarket", "Bitcoin Up or Down - 15 minutes", "2026-07-01T18:15:00Z")
+
+        details = market_match_details(left, right)
+
+        self.assertIn("interval_differs", details.warnings)
+
 
 if __name__ == "__main__":
     unittest.main()
-
