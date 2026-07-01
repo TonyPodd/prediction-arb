@@ -91,11 +91,23 @@ Summarize monitor history:
 python -m prediction_arb.cli monitor-report --input data/monitor-taiwan.jsonl --top 10
 ```
 
+Run local dashboard:
+
+```bash
+python -m prediction_arb.cli dashboard --input data/monitor-taiwan.jsonl --host 127.0.0.1 --port 8765
+```
+
 Test Telegram alerts:
 
 ```bash
 # Either export TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID or put them in local .env.
 python -m prediction_arb.cli telegram-test
+```
+
+Run Telegram command bot:
+
+```bash
+python -m prediction_arb.cli telegram-bot --input data/monitor-taiwan.jsonl
 ```
 
 Candidate output includes parsed conditions:
@@ -122,6 +134,8 @@ deadline: UTC minute when available
 - `monitor` appends one JSON object per scan to JSONL and reports active, new, and gone opportunity keys. It supports repeated `--query`, category filtering via `--category`, and broad scans via `--all-markets`. Use `--min-profit` to filter by estimated USDC profit and `--max-close-hours` to focus on short-term markets.
 - If the JSONL file already exists, the next monitor run resumes comparison from the last saved `active_keys`. Use `--alert-new` for compact terminal alerts, `--webhook-url` for JSON webhook alerts, or `--telegram-bot-token` plus `--telegram-chat-id` for Telegram alerts. Temporary scan failures are stored as error snapshots; use `--stop-on-error` for strict debugging.
 - `monitor-report` summarizes JSONL history, counts error snapshots, and ranks routes by the best observed net edge.
+- `dashboard` serves a local read-only UI with summary metrics, best route ranking, recent monitor events, and a best-edge trend chart.
+- `telegram-bot` replies to `/status`, `/report`, and `/help` using the configured monitor JSONL file.
 - `fee_notes` explains which fee assumptions were applied. `--include-filtered` includes rejected candidates with a reason.
 - Any reported opportunity should be treated as a candidate for research, not as a trade signal.
 

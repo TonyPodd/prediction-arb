@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prediction_arb.reporting import summarize_monitor_history
+from prediction_arb.reporting import read_monitor_history, summarize_monitor_history
 
 
 class ReportingTests(unittest.TestCase):
@@ -81,6 +81,15 @@ class ReportingTests(unittest.TestCase):
 
         self.assertEqual(summary["snapshots"], 0)
         self.assertEqual(summary["best_routes"], [])
+
+    def test_read_monitor_history_returns_jsonl_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "monitor.jsonl"
+            path.write_text('{"a": 1}\n{"b": 2}\n', encoding="utf-8")
+
+            rows = read_monitor_history(path)
+
+        self.assertEqual(rows, [{"a": 1}, {"b": 2}])
 
 
 if __name__ == "__main__":

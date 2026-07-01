@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def summarize_monitor_history(path: Path, top: int = 10) -> dict:
-    snapshots = _read_jsonl(path)
+    snapshots = read_monitor_history(path)
     error_snapshots = [item for item in snapshots if item.get("type") == "error"]
     success_snapshots = [item for item in snapshots if item.get("type") != "error"]
     best_by_key: dict[str, dict] = {}
@@ -49,7 +49,7 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
     }
 
 
-def _read_jsonl(path: Path) -> list[dict]:
+def read_monitor_history(path: Path) -> list[dict]:
     rows = []
     if not path.exists():
         return rows

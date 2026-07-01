@@ -10,12 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
+from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
 from prediction_arb.reporting import summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
+from prediction_arb.telegram_bot import run_telegram_bot
 
 
 def main() -> None:
@@ -126,6 +128,17 @@ def main() -> None:
     telegram_test_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
     telegram_test_parser.add_argument("--message", default="prediction-arb Telegram alerts are configured")
 
+    telegram_bot_parser = subparsers.add_parser("telegram-bot", help="Run Telegram command bot for monitor status/report.")
+    telegram_bot_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
+    telegram_bot_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
+    telegram_bot_parser.add_argument("--input", type=Path, default=Path("data/monitor-taiwan.jsonl"))
+    telegram_bot_parser.add_argument("--poll-interval", type=float, default=2.0)
+
+    dashboard_parser = subparsers.add_parser("dashboard", help="Serve local monitor dashboard.")
+    dashboard_parser.add_argument("--host", default="127.0.0.1")
+    dashboard_parser.add_argument("--port", type=int, default=8765)
+    dashboard_parser.add_argument("--input", type=Path, default=Path("data/monitor-taiwan.jsonl"))
+
     args = parser.parse_args()
     if args.command == "scan":
         _scan(args)
@@ -149,6 +162,10 @@ def main() -> None:
         _monitor_report(args)
     elif args.command == "telegram-test":
         _telegram_test(args)
+    elif args.command == "telegram-bot":
+        _telegram_bot(args)
+    elif args.command == "dashboard":
+        _dashboard(args)
 
 
 def _scan(args: argparse.Namespace) -> None:
@@ -380,6 +397,16 @@ def _telegram_test(args: argparse.Namespace) -> None:
         raise ValueError("--bot-token/--chat-id or TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are required.")
     _post_json(_telegram_send_message_url(args.bot_token), build_telegram_payload(args.chat_id, args.message))
     print("Telegram test message sent.")
+
+
+def _telegram_bot(args: argparse.Namespace) -> None:
+    if not args.bot_token:
+        raise ValueError("--bot-token or TELEGRAM_BOT_TOKEN is required.")
+    run_telegram_bot(args.bot_token, args.input, allowed_chat_id=args.chat_id, poll_interval=args.poll_interval)
+
+
+def _dashboard(args: argparse.Namespace) -> None:
+    serve_dashboard(args.host, args.port, default_input=args.input)
 
 
 def _monitor_error_payload(query: str, exc: Exception) -> dict:
