@@ -11,6 +11,7 @@ from urllib import request
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.reporting import summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
 
@@ -103,6 +104,11 @@ def main() -> None:
     monitor_parser.add_argument("--webhook-url", help="POST new-opportunity alerts to this webhook URL.")
     monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
 
+    report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
+    report_parser.add_argument("--input", type=Path, required=True)
+    report_parser.add_argument("--top", type=int, default=10)
+    report_parser.add_argument("--output", type=Path)
+
     args = parser.parse_args()
     if args.command == "scan":
         _scan(args)
@@ -122,6 +128,8 @@ def main() -> None:
         _fees(args)
     elif args.command == "monitor":
         _monitor(args)
+    elif args.command == "monitor-report":
+        _monitor_report(args)
 
 
 def _scan(args: argparse.Namespace) -> None:
@@ -331,6 +339,11 @@ def _monitor(args: argparse.Namespace) -> None:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("Monitor stopped.")
+
+
+def _monitor_report(args: argparse.Namespace) -> None:
+    payload = summarize_monitor_history(args.input, top=args.top)
+    _write_or_print([payload], args.output)
 
 
 def _write_or_print(payload: list[dict], output: Path | None) -> None:
