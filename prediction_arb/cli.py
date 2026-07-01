@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from dataclasses import asdict
@@ -104,8 +105,8 @@ def main() -> None:
     monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
     monitor_parser.add_argument("--webhook-url", help="POST new-opportunity alerts to this webhook URL.")
     monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
-    monitor_parser.add_argument("--telegram-bot-token", help="Telegram bot token. Prefer env expansion, not hardcoding.")
-    monitor_parser.add_argument("--telegram-chat-id", help="Telegram chat id where new-opportunity alerts are sent.")
+    monitor_parser.add_argument("--telegram-bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"), help="Telegram bot token. Defaults to TELEGRAM_BOT_TOKEN.")
+    monitor_parser.add_argument("--telegram-chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"), help="Telegram chat id. Defaults to TELEGRAM_CHAT_ID.")
     monitor_parser.add_argument("--stop-on-error", action="store_true", help="Exit instead of appending an error snapshot when a scan fails.")
 
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
@@ -114,8 +115,8 @@ def main() -> None:
     report_parser.add_argument("--output", type=Path)
 
     telegram_test_parser = subparsers.add_parser("telegram-test", help="Send a test Telegram message.")
-    telegram_test_parser.add_argument("--bot-token", required=True)
-    telegram_test_parser.add_argument("--chat-id", required=True)
+    telegram_test_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
+    telegram_test_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
     telegram_test_parser.add_argument("--message", default="prediction-arb Telegram alerts are configured")
 
     args = parser.parse_args()
@@ -365,6 +366,8 @@ def _monitor_report(args: argparse.Namespace) -> None:
 
 
 def _telegram_test(args: argparse.Namespace) -> None:
+    if not args.bot_token or not args.chat_id:
+        raise ValueError("--bot-token/--chat-id or TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are required.")
     _post_json(_telegram_send_message_url(args.bot_token), build_telegram_payload(args.chat_id, args.message))
     print("Telegram test message sent.")
 

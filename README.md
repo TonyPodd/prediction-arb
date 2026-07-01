@@ -91,7 +91,9 @@ python -m prediction_arb.cli monitor-report --input data/monitor-taiwan.jsonl --
 Test Telegram alerts:
 
 ```bash
-python -m prediction_arb.cli telegram-test --bot-token "$TELEGRAM_BOT_TOKEN" --chat-id "$TELEGRAM_CHAT_ID"
+export TELEGRAM_BOT_TOKEN="..."
+export TELEGRAM_CHAT_ID="..."
+python -m prediction_arb.cli telegram-test
 ```
 
 Candidate output includes parsed conditions:
