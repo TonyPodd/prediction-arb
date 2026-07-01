@@ -1,0 +1,13 @@
+[project]
+name = "prediction-arb-parser"
+version = "0.1.0"
+description = "Read-only Limitless and Polymarket market scanner for potential cross-venue prediction-market arbitrage."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+prediction-arb = "prediction_arb.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
