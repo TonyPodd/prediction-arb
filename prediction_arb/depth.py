@@ -66,6 +66,7 @@ def scan_depth_opportunities(
     min_match_score: float = 0.25,
     allow_partial: bool = False,
     fee_bps: float = 0.0,
+    min_profit: float = 0.0,
 ) -> list[DepthOpportunity]:
     rows = scan_depth_candidates(
         limitless_markets=limitless_markets,
@@ -76,6 +77,7 @@ def scan_depth_opportunities(
         min_match_score=min_match_score,
         allow_partial=allow_partial,
         fee_bps=fee_bps,
+        min_profit=min_profit,
         include_filtered=False,
     )
     return [
@@ -115,6 +117,7 @@ def scan_depth_candidates(
     min_match_score: float = 0.25,
     allow_partial: bool = False,
     fee_bps: float = 0.0,
+    min_profit: float = 0.0,
     include_filtered: bool = False,
 ) -> list[DepthCandidate]:
     detected_at = datetime.now(tz=timezone.utc)
@@ -138,6 +141,7 @@ def scan_depth_candidates(
                         safety_buffer,
                         allow_partial,
                         fee_bps,
+                        min_profit,
                         include_filtered,
                         detected_at,
                         book_cache,
@@ -155,6 +159,7 @@ def sweep_depth(
     safety_buffer: float = 0.002,
     min_match_score: float = 0.25,
     fee_bps: float = 0.0,
+    min_profit: float = 0.0,
 ) -> list[DepthSweepRow]:
     rows = []
     book_cache: dict[tuple[str, str, str], OrderBook | None] = {}
@@ -168,6 +173,7 @@ def sweep_depth(
             min_match_score=min_match_score,
             allow_partial=False,
             fee_bps=fee_bps,
+            min_profit=min_profit,
             include_filtered=False,
             book_cache=book_cache,
         )
@@ -194,6 +200,7 @@ def _scan_depth_candidates_with_cache(
     min_match_score: float,
     allow_partial: bool,
     fee_bps: float,
+    min_profit: float,
     include_filtered: bool,
     book_cache: dict[tuple[str, str, str], OrderBook | None],
 ) -> list[DepthCandidate]:
@@ -216,6 +223,7 @@ def _scan_depth_candidates_with_cache(
                         safety_buffer,
                         allow_partial,
                         fee_bps,
+                        min_profit,
                         include_filtered,
                         detected_at,
                         book_cache,
@@ -235,6 +243,7 @@ def find_max_depth_size(
     safety_buffer: float = 0.002,
     min_match_score: float = 0.25,
     fee_bps: float = 0.0,
+    min_profit: float = 0.0,
 ) -> DepthMaxResult:
     sizes = _geometric_sizes(min_size, max_size, step_multiplier)
     checked = sweep_depth(
@@ -245,6 +254,7 @@ def find_max_depth_size(
         safety_buffer=safety_buffer,
         min_match_score=min_match_score,
         fee_bps=fee_bps,
+        min_profit=min_profit,
     )
     passing = [row for row in checked if row.opportunities]
     best_row = passing[-1] if passing else None
@@ -269,6 +279,7 @@ def _pair_depth_opportunities(
     safety_buffer: float,
     allow_partial: bool,
     fee_bps: float,
+    min_profit: float,
     include_filtered: bool,
     detected_at: datetime,
     book_cache: dict[tuple[str, str, str], OrderBook | None],
@@ -310,6 +321,8 @@ def _pair_depth_opportunities(
             net_edge = depth_edge - safety_buffer - fee_estimate
             if net_edge < min_net_edge:
                 rejection_reason = "net_edge_below_threshold"
+            elif net_edge * executable_size < min_profit:
+                rejection_reason = "profit_below_threshold"
         else:
             fee_notes = []
 

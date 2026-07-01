@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prediction_arb.cli import _load_dotenv, _load_monitor_keys, _monitor_error_payload, _telegram_send_message_url
+from datetime import datetime, timedelta, timezone
+
+from argparse import Namespace
+
+from prediction_arb.cli import _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _telegram_send_message_url, _validate_monitor_scope
+from prediction_arb.models import Market, TopOfBook
 
 
 class CliTests(unittest.TestCase):
@@ -53,6 +58,28 @@ class CliTests(unittest.TestCase):
                 os.environ.pop("EXAMPLE_TOKEN", None)
                 if old_value is not None:
                     os.environ["EXAMPLE_TOKEN"] = old_value
+
+    def test_filter_by_close_window_keeps_short_term_markets(self) -> None:
+        near = Market("test", "near", "Near", None, (datetime.now(tz=timezone.utc) + timedelta(hours=2)).isoformat(), None, None, TopOfBook(), {})
+        far = Market("test", "far", "Far", None, (datetime.now(tz=timezone.utc) + timedelta(days=3)).isoformat(), None, None, TopOfBook(), {})
+
+        rows = _filter_by_close_window([near, far], min_close_minutes=1, max_close_hours=24)
+
+        self.assertEqual([item.market_id for item in rows], ["near"])
+
+    def test_filter_by_any_category_uses_tags_and_categories(self) -> None:
+        crypto = Market("test", "crypto", "BTC Up or Down", None, None, None, None, TopOfBook(), {"categories": ["Crypto"], "tags": ["15 min"]})
+        sports = Market("test", "sports", "Team wins", None, None, None, None, TopOfBook(), {"categories": ["Sports"]})
+
+        rows = _filter_by_any_category([crypto, sports], ["crypto"])
+
+        self.assertEqual([item.market_id for item in rows], ["crypto"])
+
+    def test_validate_monitor_scope_requires_some_universe(self) -> None:
+        with self.assertRaises(ValueError):
+            _validate_monitor_scope(Namespace(query=[], category=[], all_markets=False))
+
+        _validate_monitor_scope(Namespace(query=["btc"], category=[], all_markets=False))
 
 
 if __name__ == "__main__":

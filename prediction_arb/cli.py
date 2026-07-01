@@ -56,6 +56,7 @@ def main() -> None:
     depth_parser.add_argument("--limit", type=int, default=50)
     depth_parser.add_argument("--size", type=float, default=100.0)
     depth_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    depth_parser.add_argument("--min-profit", type=float, default=0.0)
     depth_parser.add_argument("--safety-buffer", type=float, default=0.002)
     depth_parser.add_argument("--fee-bps", type=float, default=0.0)
     depth_parser.add_argument("--min-match-score", type=float, default=0.25)
@@ -92,15 +93,20 @@ def main() -> None:
     fees_parser.add_argument("--output", type=Path)
 
     monitor_parser = subparsers.add_parser("monitor", help="Repeatedly scan depth opportunities and append snapshots to JSONL.")
-    monitor_parser.add_argument("--query", required=True)
+    monitor_parser.add_argument("--query", action="append", default=[])
+    monitor_parser.add_argument("--category", action="append", default=[], help="Filter fetched markets by category/tag/title text. Can be repeated.")
+    monitor_parser.add_argument("--all-markets", action="store_true", help="Scan fetched source universes without query filtering.")
     monitor_parser.add_argument("--limit", type=int, default=50)
     monitor_parser.add_argument("--size", type=float, default=100.0)
     monitor_parser.add_argument("--interval", type=float, default=30.0)
     monitor_parser.add_argument("--iterations", type=int, default=0, help="0 means run until interrupted.")
     monitor_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    monitor_parser.add_argument("--min-profit", type=float, default=0.0)
     monitor_parser.add_argument("--safety-buffer", type=float, default=0.002)
     monitor_parser.add_argument("--fee-bps", type=float, default=0.0)
     monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
+    monitor_parser.add_argument("--min-close-minutes", type=float)
+    monitor_parser.add_argument("--max-close-hours", type=float)
     monitor_parser.add_argument("--output", type=Path, default=Path("data/monitor.jsonl"))
     monitor_parser.add_argument("--print-snapshots", action="store_true")
     monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
@@ -256,6 +262,7 @@ def _depth_scan(args: argparse.Namespace) -> None:
         min_match_score=args.min_match_score,
         allow_partial=args.allow_partial,
         fee_bps=args.fee_bps,
+        min_profit=getattr(args, "min_profit", 0.0),
         include_filtered=args.include_filtered,
     )
     payload = [_serializable(asdict(item)) for item in rows]
@@ -318,16 +325,17 @@ def _fees(args: argparse.Namespace) -> None:
 
 
 def _monitor(args: argparse.Namespace) -> None:
+    _validate_monitor_scope(args)
+    scope_label = _monitor_scope_label(args)
     previous_keys = _load_monitor_keys(args.output)
     iteration = 0
     try:
         while True:
             iteration += 1
             try:
-                limitless_markets = _fetch_limitless(args.limit, args.query)
-                polymarket_markets = _fetch_polymarket(args.limit, args.query)
+                limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
                 snapshot, previous_keys = monitor_once(
-                    query=args.query,
+                    query=scope_label,
                     limitless_markets=limitless_markets,
                     polymarket_markets=polymarket_markets,
                     previous_keys=previous_keys,
@@ -336,6 +344,7 @@ def _monitor(args: argparse.Namespace) -> None:
                     safety_buffer=args.safety_buffer,
                     min_match_score=args.min_match_score,
                     fee_bps=args.fee_bps,
+                    min_profit=args.min_profit,
                 )
                 payload = _serializable(asdict(snapshot))
                 _append_jsonl(payload, args.output)
@@ -350,7 +359,7 @@ def _monitor(args: argparse.Namespace) -> None:
             except Exception as exc:
                 if args.stop_on_error:
                     raise
-                payload = _monitor_error_payload(args.query, exc)
+                payload = _monitor_error_payload(scope_label, exc)
                 _append_jsonl(payload, args.output)
                 print(f"{payload['detected_at']} error={payload['error']}")
 
@@ -380,6 +389,24 @@ def _monitor_error_payload(query: str, exc: Exception) -> dict:
         "detected_at": datetime.now(tz=timezone.utc).isoformat(),
         "error": f"{exc.__class__.__name__}: {exc}",
     }
+
+
+def _monitor_scope_label(args: argparse.Namespace) -> str:
+    parts = []
+    if args.query:
+        parts.append("query=" + ",".join(args.query))
+    if args.category:
+        parts.append("category=" + ",".join(args.category))
+    if args.all_markets:
+        parts.append("all-markets")
+    if args.max_close_hours is not None:
+        parts.append(f"max-close-hours={args.max_close_hours:g}")
+    return ";".join(parts) or "all-markets"
+
+
+def _validate_monitor_scope(args: argparse.Namespace) -> None:
+    if not args.query and not args.category and not args.all_markets:
+        raise ValueError("monitor requires at least one --query, --category, or --all-markets.")
 
 
 def _write_or_print(payload: list[dict], output: Path | None) -> None:
@@ -478,12 +505,91 @@ def _filter_markets(markets: list, min_liquidity: float) -> list:
     return [market for market in markets if (market.liquidity or 0.0) >= min_liquidity]
 
 
+def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
+    if args.query:
+        limitless_markets = _dedupe_markets(
+            market
+            for query in args.query
+            for market in _fetch_limitless(args.limit, query)
+        )
+        polymarket_markets = _dedupe_markets(
+            market
+            for query in args.query
+            for market in _fetch_polymarket(args.limit, query)
+        )
+    else:
+        limitless_markets = limitless.fetch_markets(limit=args.limit)
+        polymarket_markets = polymarket.fetch_markets(limit=args.limit)
+
+    if args.category:
+        limitless_markets = _filter_by_any_category(limitless_markets, args.category)
+        polymarket_markets = _filter_by_any_category(polymarket_markets, args.category)
+
+    limitless_markets = _filter_by_close_window(limitless_markets, args.min_close_minutes, args.max_close_hours)
+    polymarket_markets = _filter_by_close_window(polymarket_markets, args.min_close_minutes, args.max_close_hours)
+    return limitless_markets, polymarket_markets
+
+
+def _dedupe_markets(markets: object) -> list:
+    seen = set()
+    rows = []
+    for market in markets:
+        key = (market.source, market.market_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(market)
+    return rows
+
+
+def _filter_by_any_category(markets: list, categories: list[str]) -> list:
+    category_tokens = [_query_tokens(category) for category in categories if _query_tokens(category)]
+    if not category_tokens:
+        return markets
+    return [
+        market
+        for market in markets
+        if any(tokens <= _query_tokens(_match_text(market)) for tokens in category_tokens)
+    ]
+
+
+def _filter_by_close_window(markets: list, min_close_minutes: float | None, max_close_hours: float | None) -> list:
+    if min_close_minutes is None and max_close_hours is None:
+        return markets
+    now = datetime.now(tz=timezone.utc)
+    rows = []
+    for market in markets:
+        close_at = _parse_datetime(getattr(market, "close_time", None))
+        if close_at is None:
+            continue
+        minutes_to_close = (close_at - now).total_seconds() / 60.0
+        if min_close_minutes is not None and minutes_to_close < min_close_minutes:
+            continue
+        if max_close_hours is not None and minutes_to_close > max_close_hours * 60.0:
+            continue
+        rows.append(market)
+    return rows
+
+
 def _fetch_limitless(limit: int, query: str) -> list:
     return limitless.search_markets(query, limit=limit) if query else limitless.fetch_markets(limit=limit)
 
 
 def _fetch_polymarket(limit: int, query: str) -> list:
     return polymarket.search_markets(query, limit=limit) if query else polymarket.fetch_markets(limit=limit)
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _filter_by_query(markets: list, query: str) -> list:

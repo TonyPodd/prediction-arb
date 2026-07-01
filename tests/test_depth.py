@@ -166,6 +166,42 @@ class DepthCandidateTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0].best_net_profit, 1.0)
         self.assertEqual(rows[0].best_route, "polymarket->limitless")
 
+    def test_min_profit_filters_small_profitable_edges(self) -> None:
+        left = Market(
+            source="limitless",
+            market_id="left",
+            title="Will China invade Taiwan by end of 2026?",
+            url=None,
+            close_time="2027-01-01T04:59:00Z",
+            volume=None,
+            liquidity=None,
+            top=TopOfBook(yes_bid=0.2, yes_ask=0.3),
+            raw={},
+        )
+        right = Market(
+            source="polymarket",
+            market_id="right",
+            title="Will China invade Taiwan before 2027?",
+            url=None,
+            close_time="2026-12-31T00:00:00Z",
+            volume=None,
+            liquidity=None,
+            top=TopOfBook(yes_bid=0.4, yes_ask=0.5),
+            raw={"feesEnabled": False},
+        )
+        books = {
+            ("limitless", "YES"): OrderBook("limitless", "l", "YES", bids=[OrderLevel(0.4, 100)], asks=[OrderLevel(0.5, 100)]),
+            ("polymarket", "YES"): OrderBook("polymarket", "p", "YES", bids=[OrderLevel(0.2, 100)], asks=[OrderLevel(0.3, 100)]),
+            ("limitless", "NO"): OrderBook("limitless", "l-no", "NO", bids=[], asks=[]),
+            ("polymarket", "NO"): OrderBook("polymarket", "p-no", "NO", bids=[], asks=[]),
+        }
+
+        with patch("prediction_arb.depth._fetch_book", side_effect=lambda market, outcome: books[(market.source, outcome)]):
+            rows = scan_depth_candidates([left], [right], size=10, min_net_edge=0.01, safety_buffer=0, min_profit=2.0, include_filtered=True)
+
+        self.assertTrue(rows)
+        self.assertEqual(rows[0].rejection_reason, "profit_below_threshold")
+
     def test_geometric_sizes_include_max(self) -> None:
         self.assertEqual(_geometric_sizes(10, 100, 2), [10.0, 20.0, 40.0, 80.0, 100.0])
 
