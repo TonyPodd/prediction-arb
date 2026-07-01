@@ -19,6 +19,7 @@ from prediction_arb.sources import limitless, polymarket
 
 
 def main() -> None:
+    _load_dotenv(Path(".env"))
     parser = argparse.ArgumentParser(prog="prediction-arb")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -416,6 +417,20 @@ def _load_monitor_keys(output: Path) -> set[str]:
     if not isinstance(keys, list):
         return set()
     return {str(item) for item in keys}
+
+
+def _load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def _send_monitor_alert_if_needed(snapshot: object, args: argparse.Namespace) -> None:

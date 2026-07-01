@@ -91,8 +91,7 @@ python -m prediction_arb.cli monitor-report --input data/monitor-taiwan.jsonl --
 Test Telegram alerts:
 
 ```bash
-export TELEGRAM_BOT_TOKEN="..."
-export TELEGRAM_CHAT_ID="..."
+# Either export TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID or put them in local .env.
 python -m prediction_arb.cli telegram-test
 ```
 
