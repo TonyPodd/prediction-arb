@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import sleep
 
 from prediction_arb.capital import plan_capital
 from prediction_arb.portfolio import load_portfolio, now_iso, portfolio_summary, save_portfolio
@@ -116,6 +117,29 @@ def paper_sync_from_monitor(monitor_path: Path, portfolio_path: Path) -> dict:
         "stale": stale,
         "portfolio": portfolio_summary(portfolio),
     }
+
+
+def run_paper_loop(
+    monitor_path: Path,
+    portfolio_path: Path,
+    interval: float = 60.0,
+    enter: bool = False,
+    max_allocations: int = 5,
+    require_sell_inventory: bool = False,
+) -> None:
+    print(f"Paper loop started: monitor={monitor_path} portfolio={portfolio_path} enter={enter}")
+    while True:
+        if enter:
+            entered = paper_enter_from_monitor(
+                monitor_path,
+                portfolio_path,
+                max_allocations=max_allocations,
+                require_sell_inventory=require_sell_inventory,
+            )
+            print(f"{now_iso()} entered={entered['entered_count']} open={entered['portfolio']['open_count']}")
+        synced = paper_sync_from_monitor(monitor_path, portfolio_path)
+        print(f"{now_iso()} synced={synced['updated_count']} stale={synced['stale_count']} current_profit={synced['portfolio']['current_estimated_profit']:.4f}")
+        sleep(interval)
 
 
 def _opportunity_key(item: dict) -> str:

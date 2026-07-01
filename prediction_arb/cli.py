@@ -15,7 +15,7 @@ from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
-from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor
+from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.scanner import scan_opportunities
@@ -162,6 +162,14 @@ def main() -> None:
     paper_sync_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
     paper_sync_parser.add_argument("--output", type=Path)
 
+    paper_loop_parser = subparsers.add_parser("paper-loop", help="Continuously sync and optionally enter paper positions.")
+    paper_loop_parser.add_argument("--input", type=Path, required=True)
+    paper_loop_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
+    paper_loop_parser.add_argument("--interval", type=float, default=60.0)
+    paper_loop_parser.add_argument("--enter", action="store_true")
+    paper_loop_parser.add_argument("--max-allocations", type=int, default=5)
+    paper_loop_parser.add_argument("--require-sell-inventory", action="store_true")
+
     telegram_test_parser = subparsers.add_parser("telegram-test", help="Send a test Telegram message.")
     telegram_test_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     telegram_test_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
@@ -211,6 +219,8 @@ def main() -> None:
         _paper_close(args)
     elif args.command == "paper-sync":
         _paper_sync(args)
+    elif args.command == "paper-loop":
+        _paper_loop(args)
     elif args.command == "telegram-test":
         _telegram_test(args)
     elif args.command == "telegram-bot":
@@ -481,6 +491,17 @@ def _paper_close(args: argparse.Namespace) -> None:
 def _paper_sync(args: argparse.Namespace) -> None:
     payload = paper_sync_from_monitor(args.input, args.portfolio)
     _write_or_print([payload], args.output)
+
+
+def _paper_loop(args: argparse.Namespace) -> None:
+    run_paper_loop(
+        args.input,
+        args.portfolio,
+        interval=args.interval,
+        enter=args.enter,
+        max_allocations=args.max_allocations,
+        require_sell_inventory=args.require_sell_inventory,
+    )
 
 
 def _telegram_test(args: argparse.Namespace) -> None:
