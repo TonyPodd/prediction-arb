@@ -724,7 +724,7 @@ def _format_suspicious_review_alert(record: dict[str, object]) -> str:
     net_edge = _sort_number(candidate.get("net_edge"))
     size = _sort_number(candidate.get("executable_size"))
     profit = net_edge * size
-    reasons = ", ".join(str(item) for item in risk.get("reasons", []) if item) or "-"
+    reasons = ", ".join(_translate_risk_reason(str(item)) for item in risk.get("reasons", []) if item) or "-"
     return "\n".join(
         [
             f"Нужна ручная проверка #{record.get('review_id')}",
@@ -748,6 +748,25 @@ def _review_inline_keyboard(review_id: str) -> dict[str, object]:
             ]
         ]
     }
+
+
+def _translate_risk_reason(value: str) -> str:
+    return {
+        "hard_structural_warning": "жесткое структурное предупреждение",
+        "price_source_differs": "разный источник цены",
+        "price_pair_differs": "разная ценовая пара",
+        "low_match_score": "слабое совпадение текста",
+        "medium_match_score": "среднее совпадение текста",
+        "high_net_edge": "высокая доходность",
+        "very_high_net_edge": "очень высокая доходность",
+        "extreme_net_edge": "аномальная доходность",
+        "large_top_depth_gap": "большая разница top/depth",
+        "fee_estimate_missing": "нет оценки комиссий",
+        "fee_model_uncertain": "комиссии оценены неуверенно",
+        "limitless_fee_curve_unknown": "неизвестная кривая комиссии Limitless",
+        "low_manual_fee_buffer": "низкий ручной запас комиссии",
+        "filtered_candidate": "кандидат отфильтрован",
+    }.get(value, value)
 
 
 def _telegram_send_message_url(bot_token: str) -> str:

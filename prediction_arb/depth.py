@@ -371,6 +371,8 @@ def _fee_estimate_per_share(
     notes = buy_notes + sell_notes
     if manual_fee_bps > 0:
         notes.append(f"manual_fee_bps={manual_fee_bps}")
+    elif any("unknown" in note or "no_fee_field" in note or "manual_fee_bps" in note for note in notes):
+        notes.append("manual_fee_buffer_missing")
     return buy_fee + sell_fee + manual_fee, notes
 
 
@@ -384,8 +386,8 @@ def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, li
             taker_base_fee = _float(market.raw.get("takerBaseFee"))
             rate = taker_base_fee / 10_000.0 if taker_base_fee else 0.06
         exponent = _float(schedule.get("exponent")) or 1.0
-        fee = rate * (price * (1.0 - price)) ** exponent
-        return fee, [f"polymarket_fee_rate={rate}", f"polymarket_fee_exponent={exponent}"]
+        fee = _round_fee(rate * (price * (1.0 - price)) ** exponent)
+        return fee, [f"polymarket_fee_rate={rate}", f"polymarket_fee_exponent={exponent}", "polymarket_fee_rounded_5dp"]
 
     if market.source == "limitless":
         creator_fee_pct = _float((market.raw.get("settings") or {}).get("creatorFeePct"))
@@ -400,6 +402,13 @@ def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, li
 
 def estimate_market_taker_fee_per_share(market: Market, price: float) -> tuple[float, list[str]]:
     return _market_taker_fee_per_share(market, price)
+
+
+def _round_fee(value: float) -> float:
+    if value <= 0:
+        return 0.0
+    rounded = round(value, 5)
+    return rounded if rounded >= 0.00001 else 0.0
 
 
 def _geometric_sizes(min_size: float, max_size: float, step_multiplier: float) -> list[float]:

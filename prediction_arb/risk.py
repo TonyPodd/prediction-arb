@@ -31,6 +31,7 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
     score = 0
     reasons: list[str] = []
     warnings = set(str(item) for item in (getattr(candidate, "match_warnings", None) or []))
+    fee_notes = [str(item) for item in (getattr(candidate, "fee_notes", None) or [])]
 
     if warnings & HARD_MATCH_WARNINGS:
         score += 60
@@ -69,6 +70,16 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
     if getattr(candidate, "fee_estimate", None) is None:
         score += 10
         reasons.append("fee_estimate_missing")
+    if any("unknown" in note or "no_fee_field" in note for note in fee_notes):
+        score += 20
+        reasons.append("fee_model_uncertain")
+    if any(note == "limitless_fee_curve_unknown_use_manual_fee_bps" for note in fee_notes):
+        score += 10
+        reasons.append("limitless_fee_curve_unknown")
+    manual_bps = _manual_fee_bps(fee_notes)
+    if manual_bps is not None and manual_bps < 25:
+        score += 10
+        reasons.append("low_manual_fee_buffer")
     if getattr(candidate, "rejection_reason", None):
         score += 10
         reasons.append("filtered_candidate")
@@ -86,6 +97,57 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
         "manual_review": score >= 25 or bool(warnings & SOFT_MATCH_WARNINGS),
         "reasons": reasons,
         "match_warnings": sorted(warnings),
+        "components": risk_components(candidate),
+    }
+
+
+def risk_components(candidate: object) -> dict[str, object]:
+    fee_notes = [str(item) for item in (getattr(candidate, "fee_notes", None) or [])]
+    net_edge = _float(getattr(candidate, "net_edge", None), 0.0)
+    depth_edge = _float(getattr(candidate, "depth_edge", None), 0.0)
+    fee_estimate = getattr(candidate, "fee_estimate", None)
+    match_score = _float(getattr(candidate, "match_score", None), 0.0)
+    warnings = [str(item) for item in (getattr(candidate, "match_warnings", None) or [])]
+    buy_quote = getattr(candidate, "buy_quote", None)
+    sell_quote = getattr(candidate, "sell_quote", None)
+
+    fee_confidence = "high"
+    if fee_estimate is None or any("unknown" in note or "no_fee_field" in note for note in fee_notes):
+        fee_confidence = "low"
+    elif any("manual_fee_bps" in note or "limitless_fee_curve_unknown" in note for note in fee_notes):
+        fee_confidence = "medium"
+
+    depth_level = "low"
+    if not getattr(buy_quote, "complete", True) or not getattr(sell_quote, "complete", True):
+        depth_level = "high"
+    elif depth_edge - net_edge > 0.03:
+        depth_level = "medium"
+
+    match_level = "low"
+    if warnings:
+        match_level = "medium"
+    if match_score < 0.35 or any(item in HARD_MATCH_WARNINGS for item in warnings):
+        match_level = "high"
+
+    return {
+        "matching": {
+            "level": match_level,
+            "score": match_score,
+            "warnings": warnings,
+        },
+        "fees": {
+            "level": "low" if fee_confidence == "high" else ("medium" if fee_confidence == "medium" else "high"),
+            "confidence": fee_confidence,
+            "fee_estimate": fee_estimate,
+            "notes": fee_notes,
+        },
+        "depth": {
+            "level": depth_level,
+            "depth_edge": getattr(candidate, "depth_edge", None),
+            "net_edge": getattr(candidate, "net_edge", None),
+            "buy_complete": getattr(buy_quote, "complete", None),
+            "sell_complete": getattr(sell_quote, "complete", None),
+        },
     }
 
 
@@ -103,3 +165,10 @@ def _float(value: object, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _manual_fee_bps(notes: list[str]) -> float | None:
+    for note in notes:
+        if note.startswith("manual_fee_bps="):
+            return _float(note.split("=", 1)[1], 0.0)
+    return None

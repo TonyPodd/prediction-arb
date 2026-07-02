@@ -53,6 +53,13 @@ class RiskReviewTests(unittest.TestCase):
         self.assertTrue(risk["manual_review"])
         self.assertIn("price_source_differs", risk["reasons"])
 
+    def test_uncertain_fee_model_raises_fee_component(self) -> None:
+        risk = assess_candidate_risk(candidate(fee_notes=["limitless_no_fee_field", "manual_fee_bps=10"]))
+
+        self.assertTrue(risk["manual_review"])
+        self.assertIn("fee_model_uncertain", risk["reasons"])
+        self.assertEqual((risk["components"]["fees"] or {})["level"], "high")
+
     def test_review_store_roundtrip_with_label(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             review_path = Path(tmp) / "review.jsonl"

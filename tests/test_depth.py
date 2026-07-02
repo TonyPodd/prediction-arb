@@ -86,6 +86,36 @@ class DepthTests(unittest.TestCase):
 
         self.assertAlmostEqual(fee, 0.015)
         self.assertIn("polymarket_fee_rate=0.06", notes)
+        self.assertIn("polymarket_fee_rounded_5dp", notes)
+
+    def test_polymarket_fee_rounds_tiny_values_to_zero(self) -> None:
+        market = Market(
+            "polymarket",
+            "m",
+            "M",
+            None,
+            None,
+            None,
+            None,
+            TopOfBook(),
+            {"feesEnabled": True, "feeSchedule": {"rate": 0.0001, "exponent": 1}},
+        )
+        from prediction_arb.depth import _market_taker_fee_per_share
+
+        fee, notes = _market_taker_fee_per_share(market, 0.01)
+
+        self.assertEqual(fee, 0.0)
+        self.assertIn("polymarket_fee_rounded_5dp", notes)
+
+    def test_missing_manual_fee_buffer_is_called_out(self) -> None:
+        buy_market = Market("limitless", "buy", "Buy", None, None, None, None, TopOfBook(), {})
+        sell_market = Market("polymarket", "sell", "Sell", None, None, None, None, TopOfBook(), {"feesEnabled": False})
+        from prediction_arb.depth import _fee_estimate_per_share
+
+        _, notes = _fee_estimate_per_share(buy_market, sell_market, 0.10, 0.20, 0)
+
+        self.assertIn("limitless_no_fee_field", notes)
+        self.assertIn("manual_fee_buffer_missing", notes)
 
     def test_public_fee_estimator_matches_market_fee(self) -> None:
         market = Market("polymarket", "m", "M", None, None, None, None, TopOfBook(), {"feesEnabled": False})

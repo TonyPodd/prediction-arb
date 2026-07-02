@@ -390,8 +390,9 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <div class="formula">net edge = avg sell price - avg buy price - safety buffer - fee estimate</div>
           <div class="formula">estimated profit = net edge * executable size</div>
           <div><strong>Polymarket:</strong> если API говорит feesEnabled=false, комиссия считается 0. Иначе используется feeSchedule: rate * price * (1 - price). Если feeSchedule нет, применяется fallback.</div>
-          <div><strong>Limitless:</strong> если есть creatorFeePct, он учитывается. Если точная кривая комиссии не пришла из API, используется ручной запас <strong>fee-bps</strong>.</div>
-          <div><strong>fee-bps 10</strong> в текущем мониторе означает 0.10%, не 10%. Например, при ценах 0.40 и 0.45 ручной запас равен (0.40 + 0.45) * 0.001 = 0.00085 на share.</div>
+          <div><strong>Polymarket:</strong> комиссия округляется до 5 знаков, как в публичной документации. В расчете мы считаем taker-вход: покупка и продажа съедают стакан.</div>
+          <div><strong>Limitless:</strong> если есть creatorFeePct, он учитывается. Если точная кривая комиссии не пришла из API, используется ручной запас <strong>fee-bps</strong>, а сделка получает повышенный risk score.</div>
+          <div><strong>fee-bps 50</strong> в текущем мониторе означает 0.50%, не 50%. Например, при ценах 0.40 и 0.45 ручной запас равен (0.40 + 0.45) * 0.005 = 0.00425 на share.</div>
           <div>Не учитываются: gas, bridge/withdrawal, задержка перевода капитала между площадками и цена предварительного получения sell-shares.</div>
         </div>
       </div>
@@ -674,7 +675,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         const c = row.candidate || {}, r = row.risk || {}, label = row.label || null;
         return `<tr>
           <td><div class="route">#${row.review_id}</div><div>${c.outcome || ""} ${c.buy_source || ""}->${c.sell_source || ""}</div><div class="num ok">${pct(c.net_edge)} / ${money((c.net_edge || 0) * (c.executable_size || 0))}</div></td>
-          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br><span class="muted">score=${r.risk_score || 0}</span><br><span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
+          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br><span class="muted">score=${r.risk_score || 0}</span><br>${riskComponents(r)}<span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
           <td>${escapeHtml(c.buy_title || "")}<br><span class="muted">${escapeHtml(c.sell_title || "")}</span></td>
           <td>${label ? `<span class="ok">${translateLabel(label.label)}</span>` : reviewButtons(row.review_id)}</td>
         </tr>`;
@@ -687,7 +688,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         return `<tr>
           <td><div class="route">${c.outcome || ""} ${c.buy_source || ""}->${c.sell_source || ""}</div><div class="num">${pct(c.net_edge)} / depth ${pct(c.depth_edge)}</div></td>
           <td class="bad">${translateReason(c.rejection_reason || "")}</td>
-          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br><span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
+          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br>${riskComponents(r)}<span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
           <td>${escapeHtml(c.buy_title || "")}<br><span class="muted">${escapeHtml(c.sell_title || "")}</span></td>
         </tr>`;
       }).join("") : `<tr><td colspan="4" class="muted">Нажми “Найти near-misses”, чтобы загрузить текущие отклоненные кандидаты.</td></tr>`;
@@ -695,6 +696,15 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     function reviewButtons(id) {
       return `<button onclick="labelReview('${id}', 'same_event')">То же событие</button> <button onclick="labelReview('${id}', 'different_event')">Не то</button> <button onclick="labelReview('${id}', 'unsure')">Сомнительно</button>`;
+    }
+
+    function riskComponents(risk) {
+      const c = risk.components || {};
+      return `<div class="chips">
+        <span class="chip ${riskClass((c.matching || {}).level)}">матчинг: ${translateRisk((c.matching || {}).level)}</span>
+        <span class="chip ${riskClass((c.depth || {}).level)}">стакан: ${translateRisk((c.depth || {}).level)}</span>
+        <span class="chip ${riskClass((c.fees || {}).level)}">комиссии: ${translateRisk((c.fees || {}).level)}</span>
+      </div>`;
     }
 
     function chips(obj, label) {
@@ -754,6 +764,9 @@ _DASHBOARD_HTML = r"""<!doctype html>
         extreme_net_edge: "аномальная доходность",
         large_top_depth_gap: "сильный разрыв top/depth",
         fee_estimate_missing: "нет оценки комиссий",
+        fee_model_uncertain: "комиссии оценены неуверенно",
+        limitless_fee_curve_unknown: "неизвестная кривая комиссии Limitless",
+        low_manual_fee_buffer: "низкий ручной запас комиссии",
         filtered_candidate: "кандидат был отфильтрован",
       };
       return map[value] || value;
@@ -777,8 +790,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     function translateFeeNote(value) {
       if (value === "polymarket_fees_disabled") return "Polymarket: 0";
+      if (value === "polymarket_fee_rounded_5dp") return "Polymarket: округление 5 знаков";
       if (value === "limitless_fee_curve_unknown_use_manual_fee_bps") return "Limitless: ручной запас";
       if (value === "limitless_no_fee_field") return "Limitless: fee не найден";
+      if (value === "manual_fee_buffer_missing") return "ручной запас не задан";
       if (value.startsWith("manual_fee_bps=")) return `ручной bps=${value.split("=")[1]}`;
       if (value.startsWith("polymarket_fee_rate=")) return `Polymarket rate=${value.split("=")[1]}`;
       if (value.startsWith("polymarket_fee_exponent=")) return `exp=${value.split("=")[1]}`;
