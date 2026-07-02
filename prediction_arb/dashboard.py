@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
 from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.depth import scan_depth_candidates
+from prediction_arb.diagnostics import build_health_report
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
@@ -78,6 +79,34 @@ def _handler(default_input: Path):
                         limitless_markets = _filter_by_max_close_hours(limitless_markets, max_close_hours)
                         polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_close_hours)
                     self._send_json(summarize_source_coverage(limitless_markets, polymarket_markets))
+                    return
+                if parsed.path == "/api/health":
+                    query = parse_qs(parsed.query)
+                    limit = _int(query.get("limit", ["300"])[0], default=300)
+                    category = query.get("category", [""])[0]
+                    max_close_hours = _float(query.get("max_close_hours", ["24"])[0])
+                    size = _float(query.get("size", ["100"])[0]) or 100.0
+                    fee_bps = _float(query.get("fee_bps", ["50"])[0]) or 50.0
+                    route_fixed_costs = _parse_cost_map(query.get("route_fixed_cost", ["*=2"])[0])
+                    route_cost_bps = _parse_cost_map(query.get("route_cost_bps", ["*=25"])[0])
+                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    if category:
+                        limitless_markets = _filter_by_category(limitless_markets, category)
+                        polymarket_markets = _filter_by_category(polymarket_markets, category)
+                    if max_close_hours is not None:
+                        limitless_markets = _filter_by_max_close_hours(limitless_markets, max_close_hours)
+                        polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_close_hours)
+                    self._send_json(
+                        build_health_report(
+                            limitless_markets,
+                            polymarket_markets,
+                            size=size,
+                            fee_bps=fee_bps,
+                            route_fixed_costs=route_fixed_costs,
+                            route_cost_bps=route_cost_bps,
+                        )
+                    )
                     return
                 if parsed.path == "/api/review":
                     query = parse_qs(parsed.query)
@@ -228,6 +257,19 @@ def _serializable(value: object) -> object:
     return value
 
 
+def _parse_cost_map(value: str) -> dict[str, float]:
+    costs: dict[str, float] = {}
+    if not value:
+        return costs
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        key, amount = item.rsplit("=", 1)
+        costs[key.strip()] = float(amount)
+    return costs
+
+
 def _filter_by_category(markets: list, category: str) -> list:
     tokens = _tokens(category)
     if not tokens:
@@ -351,6 +393,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <button class="tab" data-view="review">Проверка</button>
       <button class="tab" data-view="portfolio">Бумажный портфель</button>
       <button class="tab" data-view="coverage">Покрытие источников</button>
+      <button class="tab" data-view="health">Диагностика</button>
       <button class="tab" data-view="events">События</button>
     </div>
   </header>
@@ -505,10 +548,43 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <div class="panel"><h2>Polymarket</h2><div id="coveragePolymarket"></div></div>
       </div>
     </section>
+
+    <section class="view" id="health">
+      <div class="panel">
+        <h2>Health / diagnostics</h2>
+        <div class="planner">
+          <label><div class="label">Категория</div><input id="healthCategory" value=""></label>
+          <label><div class="label">Часов до закрытия</div><input id="healthHours" type="number" value="24" min="1"></label>
+          <label><div class="label">Лимит загрузки</div><input id="healthLimit" type="number" value="300" min="10"></label>
+          <label><div class="label">Размер</div><input id="healthSize" type="number" value="100" min="1"></label>
+          <button class="primary" id="healthRefreshBtn">Проверить</button>
+        </div>
+        <div class="explain">
+          <div>Эта диагностика отвечает на вопрос, почему monitor ничего не нашел: нет рынков, matcher не нашел пары, стаканы не исполнимы или costs съели edge.</div>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Limitless рынков</div><div class="value" id="healthLimitless">0</div></div>
+        <div class="metric"><div class="label">Polymarket рынков</div><div class="value" id="healthPolymarket">0</div></div>
+        <div class="metric"><div class="label">Пары проверены</div><div class="value" id="healthPairs">0</div></div>
+        <div class="metric"><div class="label">Совместимые пары</div><div class="value" id="healthCompatible">0</div></div>
+        <div class="metric"><div class="label">Full passing</div><div class="value ok" id="healthPassing">0</div></div>
+        <div class="metric"><div class="label">Вердикт</div><div class="value" id="healthVerdict">-</div></div>
+      </div>
+      <div class="coverage-grid">
+        <div class="panel"><h2>No costs</h2><div id="healthNoCosts"></div></div>
+        <div class="panel"><h2>Fees only</h2><div id="healthFeesOnly"></div></div>
+      </div>
+      <div class="panel"><h2>Full costs</h2><div id="healthFullCosts"></div></div>
+      <div class="coverage-grid">
+        <div class="panel"><h2>Причины отказов</h2><div class="chips" id="healthRejections"></div></div>
+        <div class="panel"><h2>Предупреждения matcher</h2><div class="chips" id="healthWarnings"></div></div>
+      </div>
+    </section>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, review: [], reviewReport: null, near: [] };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, review: [], reviewReport: null, near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -544,6 +620,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       await refreshPortfolio();
       await refreshReview();
       if (!state.coverage) await refreshCoverage();
+      if (!state.health) await refreshHealth();
       render();
     }
 
@@ -563,6 +640,14 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const hours = encodeURIComponent(el("coverageHours").value || "");
       const limit = Number(el("coverageLimit").value || 200);
       state.coverage = await json(`/api/coverage?category=${category}&max_close_hours=${hours}&limit=${limit}`);
+    }
+
+    async function refreshHealth() {
+      const category = encodeURIComponent(el("healthCategory").value || "");
+      const hours = encodeURIComponent(el("healthHours").value || "24");
+      const limit = Number(el("healthLimit").value || 300);
+      const size = Number(el("healthSize").value || 100);
+      state.health = await json(`/api/health?category=${category}&max_close_hours=${hours}&limit=${limit}&size=${size}&fee_bps=50&route_fixed_cost=${encodeURIComponent("*=2")}&route_cost_bps=${encodeURIComponent("*=25")}`);
     }
 
     async function refreshReview() {
@@ -618,6 +703,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderPlan(state.plan || {});
       renderPortfolio(state.portfolio || {});
       renderCoverage(state.coverage || {});
+      renderHealth(state.health || {});
       renderReview(state.review || []);
       renderReviewReport(state.reviewReport || {});
       renderNear(state.near || []);
@@ -689,6 +775,38 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <table><thead><tr><th>Рынок</th><th>Тип</th><th>Актив</th><th>Интервал</th><th>Закрытие</th></tr></thead><tbody>
           ${rows.map(row => `<tr><td>${escapeHtml(row.title || "")}</td><td>${(row.condition || {}).kind || ""}</td><td>${(row.condition || {}).asset || ""}</td><td class="num">${(row.condition || {}).interval_minutes || ""}</td><td class="num">${row.close_time || ""}</td></tr>`).join("")}
         </tbody></table>`;
+    }
+
+    function renderHealth(health) {
+      const sources = (health.coverage || {}).sources || {};
+      const matching = health.matching || {};
+      const scans = health.scans || {};
+      el("healthLimitless").textContent = (sources.limitless || {}).count || 0;
+      el("healthPolymarket").textContent = (sources.polymarket || {}).count || 0;
+      el("healthPairs").textContent = matching.pairs_checked || 0;
+      el("healthCompatible").textContent = matching.structurally_compatible_pairs || 0;
+      el("healthPassing").textContent = (scans.full_costs || {}).passing_count || 0;
+      el("healthVerdict").textContent = ((health.verdict || {}).status || "-").replaceAll("_", " ");
+      el("healthVerdict").className = ((scans.full_costs || {}).passing_count || 0) ? "value ok" : "value warn";
+      renderScanSummary("healthNoCosts", scans.no_costs || {});
+      renderScanSummary("healthFeesOnly", scans.fees_only || {});
+      renderScanSummary("healthFullCosts", scans.full_costs || {});
+      el("healthRejections").innerHTML = chips((scans.full_costs || {}).rejection_counts || {}, "reject");
+      el("healthWarnings").innerHTML = chips(matching.warning_counts || {}, "warn");
+    }
+
+    function renderScanSummary(targetId, scan) {
+      const best = scan.best_any || {};
+      el(targetId).innerHTML = `
+        <div class="metrics">
+          <div class="metric"><div class="label">Legs</div><div class="value">${scan.candidate_legs || 0}</div></div>
+          <div class="metric"><div class="label">Прошло</div><div class="value ok">${scan.passing_count || 0}</div></div>
+          <div class="metric"><div class="label">Лучший edge</div><div class="value ${best.net_edge >= 0 ? "ok" : "bad"}">${pct(best.net_edge)}</div></div>
+        </div>
+        ${best.outcome ? `<table><thead><tr><th>Лучший кандидат</th><th>Net edge</th><th>Причина</th><th>Fees</th></tr></thead><tbody><tr>
+          <td><div class="route">${best.outcome || ""} ${best.buy_source || ""}->${best.sell_source || ""}</div><div class="muted">${escapeHtml(best.buy_title || "")}</div><div class="muted">${escapeHtml(best.sell_title || "")}</div></td>
+          <td class="num">${pct(best.net_edge)}</td><td class="bad">${translateReason(best.rejection_reason || "")}</td><td class="num">${formatFee(best)}</td>
+        </tr></tbody></table>` : `<div class="muted">Кандидатов нет.</div>`}`;
     }
 
     function renderReview(rows) {
@@ -858,6 +976,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("planBtn").addEventListener("click", () => refreshPlanner().then(render));
     el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
     el("coverageRefreshBtn").addEventListener("click", () => refreshCoverage().then(render));
+    el("healthRefreshBtn").addEventListener("click", () => refreshHealth().then(render));
     el("reviewRefreshBtn").addEventListener("click", () => refreshReview().then(render));
     el("nearRefreshBtn").addEventListener("click", refreshNearMisses);
     el("paperEnterBtn").addEventListener("click", paperEnter);

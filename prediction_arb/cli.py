@@ -14,6 +14,7 @@ from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
 from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
+from prediction_arb.diagnostics import build_health_report
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import _opportunity_key, build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
@@ -69,6 +70,23 @@ def main() -> None:
     coverage_parser.add_argument("--max-close-hours", type=float)
     coverage_parser.add_argument("--examples", type=int, default=8)
     coverage_parser.add_argument("--output", type=Path)
+
+    health_parser = subparsers.add_parser("health", help="Diagnose source coverage, matching funnel, depth, fees, and operational costs.")
+    health_parser.add_argument("--query", action="append", default=[])
+    health_parser.add_argument("--category", action="append", default=[])
+    health_parser.add_argument("--all-markets", action="store_true")
+    health_parser.add_argument("--limit", type=int, default=300)
+    health_parser.add_argument("--size", type=float, default=100.0)
+    health_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    health_parser.add_argument("--min-profit", type=float, default=1.0)
+    health_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    health_parser.add_argument("--fee-bps", type=float, default=50.0)
+    health_parser.add_argument("--route-fixed-cost", default="*=2")
+    health_parser.add_argument("--route-cost-bps", default="*=25")
+    health_parser.add_argument("--min-match-score", type=float, default=0.25)
+    health_parser.add_argument("--min-close-minutes", type=float)
+    health_parser.add_argument("--max-close-hours", type=float, default=24.0)
+    health_parser.add_argument("--output", type=Path)
 
     depth_parser = subparsers.add_parser("depth-scan", help="Scan executable edge using orderbook depth.")
     depth_parser.add_argument("--query", required=True)
@@ -248,6 +266,8 @@ def main() -> None:
         _diagnose(args)
     elif args.command == "coverage":
         _coverage(args)
+    elif args.command == "health":
+        _health(args)
     elif args.command == "depth-scan":
         _depth_scan(args)
     elif args.command == "near-misses":
@@ -396,6 +416,26 @@ def _coverage(args: argparse.Namespace) -> None:
     )
     payload["scope"] = _monitor_scope_label(args)
     _write_or_print(payload, args.output)
+
+
+def _health(args: argparse.Namespace) -> None:
+    if not args.query and not args.category:
+        args.all_markets = True
+    limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+    payload = build_health_report(
+        limitless_markets,
+        polymarket_markets,
+        size=args.size,
+        min_match_score=args.min_match_score,
+        min_net_edge=args.min_net_edge,
+        safety_buffer=args.safety_buffer,
+        fee_bps=args.fee_bps,
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
+        min_profit=args.min_profit,
+    )
+    payload["scope"] = _monitor_scope_label(args)
+    _write_or_print([payload], args.output)
 
 
 def _depth_scan(args: argparse.Namespace) -> None:
