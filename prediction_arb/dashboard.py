@@ -251,6 +251,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
     .coverage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
     .chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: #fbfcfd; font-size: 12px; }
+    .explain { display: grid; gap: 8px; margin-top: 12px; color: var(--muted); }
+    .formula { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; padding: 8px; color: var(--ink); overflow-wrap: anywhere; }
     .switch { display: flex; align-items: center; gap: 7px; height: 34px; color: var(--muted); }
     .switch input { height: auto; min-width: auto; }
     @media (max-width: 980px) {
@@ -290,7 +292,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       </div>
       <div class="panel">
         <h2>Активные маршруты сейчас</h2>
-        <table><thead><tr><th>Маршрут</th><th>Рынок</th><th>Net edge</th><th>Размер</th><th>Оценка прибыли</th><th>Обнаружено</th></tr></thead><tbody id="routesTable"></tbody></table>
+        <table><thead><tr><th>Маршрут</th><th>Рынок</th><th>Net edge</th><th>Размер</th><th>Комиссии</th><th>Оценка прибыли</th><th>Обнаружено</th></tr></thead><tbody id="routesTable"></tbody></table>
       </div>
     </section>
 
@@ -301,10 +303,25 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <label><div class="label">USDC на Limitless</div><input id="limitlessCash" type="number" value="250" min="0" step="10"></label>
           <label><div class="label">USDC на Polymarket</div><input id="polymarketCash" type="number" value="250" min="0" step="10"></label>
           <label><div class="label">Макс. позиций</div><input id="allocationLimit" type="number" value="10" min="1" step="1"></label>
-          <label class="switch"><input id="assumeInventory" type="checkbox" checked> считать, что sell-инвентарь есть</label>
+          <label class="switch"><input id="assumeInventory" type="checkbox" checked> теоретический режим: не проверять sell-shares</label>
           <button class="primary" id="planBtn">Посчитать</button>
         </div>
-        <p class="muted">Для sell leg обычно нужны outcome shares на площадке продажи. Сними галочку, чтобы увидеть отказы из-за нехватки инвентаря.</p>
+        <div class="explain">
+          <div><strong>Sell-shares</strong> - это YES/NO shares, которые уже лежат на площадке, где мы хотим продавать. Если их нет, мгновенно продать вторую ногу нельзя.</div>
+          <div>Когда галочка включена, планировщик делает теоретическую оценку и считает, что нужные shares уже есть. Когда выключена, сделки без указанного инвентаря будут отклонены.</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Как считаются комиссии</h2>
+        <div class="explain">
+          <div>Сначала scanner считает среднюю цену исполнения по стакану на выбранный размер: <strong>avg buy</strong> и <strong>avg sell</strong>. Потом из разницы вычитает запас и комиссии.</div>
+          <div class="formula">net edge = avg sell price - avg buy price - safety buffer - fee estimate</div>
+          <div class="formula">estimated profit = net edge * executable size</div>
+          <div><strong>Polymarket:</strong> если API говорит feesEnabled=false, комиссия считается 0. Иначе используется feeSchedule: rate * price * (1 - price). Если feeSchedule нет, применяется fallback.</div>
+          <div><strong>Limitless:</strong> если есть creatorFeePct, он учитывается. Если точная кривая комиссии не пришла из API, используется ручной запас <strong>fee-bps</strong>.</div>
+          <div><strong>fee-bps 10</strong> в текущем мониторе означает 0.10%, не 10%. Например, при ценах 0.40 и 0.45 ручной запас равен (0.40 + 0.45) * 0.001 = 0.00085 на share.</div>
+          <div>Не учитываются: gas, bridge/withdrawal, задержка перевода капитала между площадками и цена предварительного получения sell-shares.</div>
+        </div>
       </div>
       <div class="metrics">
         <div class="metric"><div class="label">Выбрано</div><div class="value" id="planAllocated">0</div></div>
@@ -316,7 +333,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       </div>
       <div class="panel">
         <h2>План распределения</h2>
-        <table><thead><tr><th>Маршрут</th><th>Кэш покупки</th><th>Инвентарь продажи</th><th>Edge</th><th>Прибыль</th></tr></thead><tbody id="allocationTable"></tbody></table>
+        <table><thead><tr><th>Маршрут</th><th>Кэш покупки</th><th>Инвентарь продажи</th><th>Edge</th><th>Комиссии</th><th>Прибыль</th></tr></thead><tbody id="allocationTable"></tbody></table>
       </div>
       <div class="panel">
         <h2>Отклоненные сигналы</h2>
@@ -471,11 +488,12 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <td>${escapeHtml(row.buy_title || "")}<br><span class="muted">${escapeHtml(row.sell_title || "")}</span></td>
           <td class="num ok">${pct(row.net_edge)}</td>
           <td class="num">${fmt.format(row.executable_size || 0)}</td>
+          <td class="num">${formatFee(row)}</td>
           <td class="num ok">${money(row.estimated_profit)}</td>
           <td class="num">${row.detected_at || ""}</td>
-        </tr>`).join("") : `<tr><td colspan="6" class="muted">Сейчас активных исполнимых маршрутов нет.</td></tr>`;
+        </tr>`).join("") : `<tr><td colspan="7" class="muted">Сейчас активных исполнимых маршрутов нет.</td></tr>`;
       const historical = (historicalRows || [])[0];
-      const historicalHtml = historical ? `<tr><td colspan="6" class="muted">Исторический максимум в файле: ${pct(historical.net_edge)} / ${money(historical.estimated_profit)}. Это не обязательно активная сейчас сделка.</td></tr>` : "";
+      const historicalHtml = historical ? `<tr><td colspan="7" class="muted">Исторический максимум в файле: ${pct(historical.net_edge)} / ${money(historical.estimated_profit)}. Это не обязательно активная сейчас сделка.</td></tr>` : "";
       el("routesTable").innerHTML = activeHtml + historicalHtml;
     }
 
@@ -489,7 +507,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("allocationTable").innerHTML = (plan.allocated || []).map(row => `
         <tr><td><div class="route">${row.outcome} ${row.route}</div><div class="muted">${escapeHtml(row.buy_title || "")}</div></td>
         <td class="num">${money(row.buy_cash_required)}</td><td class="num">${fmt.format(row.sell_inventory_required || 0)}<br><span class="muted">${row.sell_inventory_key}</span></td>
-        <td class="num ok">${pct(row.net_edge)}</td><td class="num ok">${money(row.estimated_profit)}</td></tr>`).join("");
+        <td class="num ok">${pct(row.net_edge)}</td><td class="num">${formatFee(row)}</td><td class="num ok">${money(row.estimated_profit)}</td></tr>`).join("");
       el("rejectedTable").innerHTML = (plan.rejected || []).slice(0, 20).map(row => `
         <tr><td>${row.outcome || ""} ${row.buy_source || ""}->${row.sell_source || ""}</td><td class="bad">${translateReason(row.planner_rejection_reason || "")}</td>
         <td class="num">${money(row.buy_cash_required)} / ${fmt.format(row.sell_inventory_required || 0)} shares</td></tr>`).join("");
@@ -564,6 +582,23 @@ _DASHBOARD_HTML = r"""<!doctype html>
         duplicate_market_exposure: "дублирующий риск на рынок",
       };
       return map[value] || value;
+    }
+
+    function formatFee(row) {
+      const notes = (row.fee_notes || []).map(translateFeeNote);
+      const fee = row.fee_estimate == null ? "n/a" : pct(row.fee_estimate);
+      return `${fee}<br><span class="muted">${notes.join(", ")}</span>`;
+    }
+
+    function translateFeeNote(value) {
+      if (value === "polymarket_fees_disabled") return "Polymarket: 0";
+      if (value === "limitless_fee_curve_unknown_use_manual_fee_bps") return "Limitless: ручной запас";
+      if (value === "limitless_no_fee_field") return "Limitless: fee не найден";
+      if (value.startsWith("manual_fee_bps=")) return `ручной bps=${value.split("=")[1]}`;
+      if (value.startsWith("polymarket_fee_rate=")) return `Polymarket rate=${value.split("=")[1]}`;
+      if (value.startsWith("polymarket_fee_exponent=")) return `exp=${value.split("=")[1]}`;
+      if (value.startsWith("limitless_creator_fee_pct=")) return `Limitless creator=${value.split("=")[1]}%`;
+      return value;
     }
 
     function escapeHtml(value) { return String(value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }

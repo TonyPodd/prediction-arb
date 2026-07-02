@@ -57,6 +57,8 @@ def plan_capital(
                 "sell_inventory_required": sell_inventory_required,
                 "net_edge": _float(item.get("net_edge")) or 0.0,
                 "estimated_profit": _estimated_profit(item),
+                "fee_estimate": item.get("fee_estimate"),
+                "fee_notes": item.get("fee_notes", []),
                 "buy_url": item.get("buy_url"),
                 "sell_url": item.get("sell_url"),
             }
