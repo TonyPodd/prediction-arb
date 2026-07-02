@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from prediction_arb.models import DepthCandidate, ExecutionQuote
+from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_candidates, append_review_label, load_review_queue
 from prediction_arb.risk import assess_candidate_risk
 
@@ -71,6 +72,27 @@ class RiskReviewTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["label"] or {})["label"], "same_event")
+
+    def test_review_quality_summarizes_false_positive_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_path = Path(tmp) / "review.jsonl"
+            label_path = Path(tmp) / "labels.jsonl"
+            records = append_review_candidates(
+                [
+                    candidate(match_warnings=["price_source_differs"], net_edge=0.4),
+                    candidate(buy_market_id="l2", sell_market_id="p2"),
+                ],
+                review_path,
+            )
+            append_review_label(str(records[0]["review_id"]), "different_event", label_path)
+            append_review_label(str(records[1]["review_id"]), "same_event", label_path)
+
+            report = summarize_review_quality(review_path, label_path)
+
+        self.assertEqual(report["labeled_count"], 2)
+        self.assertEqual(report["label_counts"]["different_event"], 1)
+        self.assertAlmostEqual(report["false_positive_rate"], 0.5)
+        self.assertIn("price_source_differs", report["different_event_reason_counts"])
 
 
 if __name__ == "__main__":

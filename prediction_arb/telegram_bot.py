@@ -10,6 +10,7 @@ from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
+from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
 from prediction_arb.sources import limitless, polymarket
 
@@ -50,6 +51,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "/status [file] - статус монитора\n"
             "/report [file] - лучшие активные маршруты\n"
             "/review - сделки для ручной проверки\n"
+            "/review_report - качество ручной разметки\n"
             "/capital [limitless_cash] [polymarket_cash] [file] - план капитала\n"
             "/coverage [limit] [hours] [category] - покрытие источников\n"
             "/portfolio - бумажный портфель\n"
@@ -87,6 +89,8 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
     if command == "/review":
         limit = int(_float(parts[1])) if len(parts) > 1 and _float(parts[1]) > 0 else 5
         return _format_review_queue(limit=limit)
+    if command == "/review_report":
+        return _format_review_report()
     if command == "/capital":
         limitless_cash = _float(parts[1]) if len(parts) > 1 else 250.0
         polymarket_cash = _float(parts[2]) if len(parts) > 2 else 250.0
@@ -173,7 +177,8 @@ def command_reply_markup(text: str) -> dict[str, object]:
             "keyboard": [
                 [{"text": "/status"}, {"text": "/report"}],
                 [{"text": "/review"}, {"text": "/capital"}],
-                [{"text": "/portfolio"}, {"text": "/coverage"}],
+                [{"text": "/review_report"}, {"text": "/portfolio"}],
+                [{"text": "/coverage"}],
             ],
             "resize_keyboard": True,
         }
@@ -216,6 +221,23 @@ def _format_review_queue(limit: int = 5) -> str:
                 f"Продать: {candidate.get('sell_title')}",
             ]
         )
+    return "\n".join(lines)
+
+
+def _format_review_report() -> str:
+    report = summarize_review_quality()
+    fp = report.get("false_positive_rate")
+    same = report.get("same_event_rate")
+    labels = report.get("label_counts", {}) if isinstance(report.get("label_counts"), dict) else {}
+    reasons = report.get("different_event_reason_counts", {}) if isinstance(report.get("different_event_reason_counts"), dict) else {}
+    lines = [
+        "Качество ручной проверки",
+        f"всего={report['total_candidates']} размечено={report['labeled_count']} pending={report['pending_count']}",
+        f"то же={labels.get('same_event', 0)} не то={labels.get('different_event', 0)} сомнительно={labels.get('unsure', 0)}",
+        f"same rate={_fmt_rate(same)} false positive={_fmt_rate(fp)}",
+    ]
+    if reasons:
+        lines.append("Причины у 'не то': " + ", ".join(f"{key}:{value}" for key, value in list(reasons.items())[:5]))
     return "\n".join(lines)
 
 
@@ -291,6 +313,13 @@ def _translate_label(label: str) -> str:
         "different_event": "не то событие",
         "unsure": "сомнительно",
     }.get(label, label)
+
+
+def _fmt_rate(value: object) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _compact_counts(value: object, *, limit: int = 4) -> str:

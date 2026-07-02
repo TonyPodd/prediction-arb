@@ -11,6 +11,7 @@ from prediction_arb.depth import scan_depth_candidates
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
+from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
 from prediction_arb.risk import assess_candidate_risk, candidate_to_dict
 from prediction_arb.sources import limitless, polymarket
@@ -83,6 +84,12 @@ def _handler(default_input: Path):
                     path = _safe_monitor_path(query.get("input", ["data/review-candidates.jsonl"])[0])
                     limit = _int(query.get("limit", ["100"])[0], default=100)
                     self._send_json(load_review_queue(path, limit=limit))
+                    return
+                if parsed.path == "/api/review-report":
+                    query = parse_qs(parsed.query)
+                    path = _safe_monitor_path(query.get("input", ["data/review-candidates.jsonl"])[0])
+                    labels = _safe_monitor_path(query.get("labels", ["data/review-labels.jsonl"])[0])
+                    self._send_json(summarize_review_quality(path, labels))
                     return
                 if parsed.path == "/api/review-label":
                     query = parse_qs(parsed.query)
@@ -435,6 +442,18 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <div>Кнопки разметки сохраняют ответ в <strong>data/review-labels.jsonl</strong>. Потом этот файл можно использовать как датасет для обучения или настройки matcher.</div>
         </div>
       </div>
+      <div class="metrics">
+        <div class="metric"><div class="label">В очереди</div><div class="value" id="reviewTotal">0</div></div>
+        <div class="metric"><div class="label">Размечено</div><div class="value" id="reviewLabeled">0</div></div>
+        <div class="metric"><div class="label">Ждет проверки</div><div class="value warn" id="reviewPending">0</div></div>
+        <div class="metric"><div class="label">То же событие</div><div class="value ok" id="reviewSame">0%</div></div>
+        <div class="metric"><div class="label">Не то событие</div><div class="value bad" id="reviewFalse">0%</div></div>
+        <div class="metric"><div class="label">Сомнительно</div><div class="value" id="reviewUnsure">0</div></div>
+      </div>
+      <div class="panel">
+        <h2>Почему matcher ошибается</h2>
+        <div class="chips" id="reviewReasons"></div>
+      </div>
       <div class="panel">
         <h2>Очередь из монитора</h2>
         <table><thead><tr><th>Сигнал</th><th>Риск</th><th>Рынки</th><th>Разметка</th></tr></thead><tbody id="reviewTable"></tbody></table>
@@ -489,7 +508,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, review: [], near: [] };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, review: [], reviewReport: null, near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -549,6 +568,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     async function refreshReview() {
       const path = encodeURIComponent(el("reviewPath").value || "data/review-candidates.jsonl");
       state.review = await json(`/api/review?input=${path}&limit=100`);
+      state.reviewReport = await json(`/api/review-report?input=${path}`);
     }
 
     async function refreshNearMisses() {
@@ -599,6 +619,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderPortfolio(state.portfolio || {});
       renderCoverage(state.coverage || {});
       renderReview(state.review || []);
+      renderReviewReport(state.reviewReport || {});
       renderNear(state.near || []);
       drawTrend(state.snapshots);
     }
@@ -681,6 +702,20 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <td>${label ? `<span class="ok">${translateLabel(label.label)}</span>` : reviewButtons(row.review_id)}</td>
         </tr>`;
       }).join("") : `<tr><td colspan="4" class="muted">Очередь пуста. Включи monitor с --save-suspicious, чтобы наполнять ее автоматически.</td></tr>`;
+    }
+
+    function renderReviewReport(report) {
+      const labels = report.label_counts || {};
+      el("reviewTotal").textContent = report.total_candidates || 0;
+      el("reviewLabeled").textContent = report.labeled_count || 0;
+      el("reviewPending").textContent = report.pending_count || 0;
+      el("reviewSame").textContent = report.same_event_rate == null ? "n/a" : pct(report.same_event_rate);
+      el("reviewFalse").textContent = report.false_positive_rate == null ? "n/a" : pct(report.false_positive_rate);
+      el("reviewUnsure").textContent = labels.unsure || 0;
+      const reasons = report.different_event_reason_counts || {};
+      el("reviewReasons").innerHTML = Object.entries(reasons).length
+        ? Object.entries(reasons).map(([key, value]) => `<span class="chip bad">${translateRiskReason(key)}: ${value}</span>`).join("")
+        : `<span class="muted">Пока нет размеченных ошибок “не то событие”.</span>`;
     }
 
     function renderNear(rows) {

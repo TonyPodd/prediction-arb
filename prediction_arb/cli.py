@@ -19,6 +19,7 @@ from prediction_arb.monitor import _opportunity_key, build_telegram_payload, bui
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
+from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_candidates
 from prediction_arb.risk import assess_candidate_risk
 from prediction_arb.scanner import scan_opportunities
@@ -169,6 +170,13 @@ def main() -> None:
     report_parser.add_argument("--top", type=int, default=10)
     report_parser.add_argument("--output", type=Path)
 
+    review_report_parser = subparsers.add_parser("review-report", help="Summarize manual review labels for matcher quality.")
+    review_report_parser.add_argument("--reviews", type=Path, default=Path("data/review-candidates.jsonl"))
+    review_report_parser.add_argument("--labels", type=Path, default=Path("data/review-labels.jsonl"))
+    review_report_parser.add_argument("--limit", type=int, default=0)
+    review_report_parser.add_argument("--examples", type=int, default=10)
+    review_report_parser.add_argument("--output", type=Path)
+
     capital_parser = subparsers.add_parser("capital-plan", help="Plan capital allocation across latest monitor opportunities.")
     capital_parser.add_argument("--input", type=Path, required=True)
     capital_parser.add_argument("--cash", default="limitless=250,polymarket=250")
@@ -254,6 +262,8 @@ def main() -> None:
         _monitor(args)
     elif args.command == "monitor-report":
         _monitor_report(args)
+    elif args.command == "review-report":
+        _review_report(args)
     elif args.command == "capital-plan":
         _capital_plan(args)
     elif args.command == "portfolio-init":
@@ -543,6 +553,11 @@ def _monitor(args: argparse.Namespace) -> None:
 
 def _monitor_report(args: argparse.Namespace) -> None:
     payload = summarize_monitor_history(args.input, top=args.top)
+    _write_or_print([payload], args.output)
+
+
+def _review_report(args: argparse.Namespace) -> None:
+    payload = summarize_review_quality(args.reviews, args.labels, limit=args.limit, examples=args.examples)
     _write_or_print([payload], args.output)
 
 
