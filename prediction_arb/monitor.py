@@ -93,9 +93,12 @@ def build_webhook_payload(text: str, webhook_format: str) -> dict[str, str]:
     return {"text": text}
 
 
-def build_telegram_payload(chat_id: str, text: str) -> dict[str, object]:
-    return {
+def build_telegram_payload(chat_id: str, text: str, reply_markup: dict[str, object] | None = None) -> dict[str, object]:
+    payload = {
         "chat_id": chat_id,
         "text": text,
         "disable_web_page_preview": True,
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    return payload

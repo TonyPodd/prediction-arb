@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from prediction_arb.models import Market, TopOfBook
-from prediction_arb.telegram_bot import handle_bot_command
+from prediction_arb.telegram_bot import command_reply_markup, handle_bot_command
 
 
 class TelegramBotTests(unittest.TestCase):
@@ -32,8 +32,8 @@ class TelegramBotTests(unittest.TestCase):
 
             text = handle_bot_command("/status", path)
 
-        self.assertIn("Monitor status", text or "")
-        self.assertIn("active: 1", text or "")
+        self.assertIn("Статус монитора", text or "")
+        self.assertIn("Активно сейчас: 1", text or "")
 
     def test_handle_unknown_command_returns_none(self) -> None:
         self.assertIsNone(handle_bot_command("/unknown", Path("missing.jsonl")))
@@ -70,18 +70,18 @@ class TelegramBotTests(unittest.TestCase):
 
             text = handle_bot_command("/capital 100 100", path)
 
-        self.assertIn("Capital plan", text or "")
-        self.assertIn("allocated=1", text or "")
+        self.assertIn("План капитала", text or "")
+        self.assertIn("выбрано=1", text or "")
 
     def test_handle_portfolio_command(self) -> None:
         text = handle_bot_command("/portfolio", Path("missing.jsonl"))
 
-        self.assertIn("Paper portfolio", text or "")
+        self.assertIn("Бумажный портфель", text or "")
 
     def test_handle_paper_sync_command(self) -> None:
         text = handle_bot_command("/paper_sync missing.jsonl", Path("missing.jsonl"))
 
-        self.assertIn("Paper sync", text or "")
+        self.assertIn("Обновление бумажного портфеля", text or "")
 
     def test_handle_coverage_command(self) -> None:
         close_time = (datetime.now(tz=timezone.utc) + timedelta(hours=2)).isoformat()
@@ -93,9 +93,15 @@ class TelegramBotTests(unittest.TestCase):
         ):
             text = handle_bot_command("/coverage 10 24", Path("missing.jsonl"))
 
-        self.assertIn("Source coverage", text or "")
+        self.assertIn("Покрытие источников", text or "")
         self.assertIn("limitless: markets=1", text or "")
         self.assertIn("polymarket: markets=1", text or "")
+
+    def test_start_command_has_buttons(self) -> None:
+        markup = command_reply_markup("/start")
+
+        self.assertIn("keyboard", markup)
+        self.assertIn("/review", str(markup))
 
 
 if __name__ == "__main__":

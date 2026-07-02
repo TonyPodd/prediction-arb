@@ -7,9 +7,12 @@ from urllib.parse import parse_qs, urlparse
 
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
 from prediction_arb.coverage import summarize_source_coverage
+from prediction_arb.depth import scan_depth_candidates
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
+from prediction_arb.review_store import append_review_label, load_review_queue
+from prediction_arb.risk import assess_candidate_risk, candidate_to_dict
 from prediction_arb.sources import limitless, polymarket
 
 
@@ -74,6 +77,57 @@ def _handler(default_input: Path):
                         limitless_markets = _filter_by_max_close_hours(limitless_markets, max_close_hours)
                         polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_close_hours)
                     self._send_json(summarize_source_coverage(limitless_markets, polymarket_markets))
+                    return
+                if parsed.path == "/api/review":
+                    query = parse_qs(parsed.query)
+                    path = _safe_monitor_path(query.get("input", ["data/review-candidates.jsonl"])[0])
+                    limit = _int(query.get("limit", ["100"])[0], default=100)
+                    self._send_json(load_review_queue(path, limit=limit))
+                    return
+                if parsed.path == "/api/review-label":
+                    query = parse_qs(parsed.query)
+                    review_id = query.get("review_id", [""])[0]
+                    label = query.get("label", [""])[0]
+                    self._send_json(append_review_label(review_id, label))
+                    return
+                if parsed.path == "/api/near-misses":
+                    query = parse_qs(parsed.query)
+                    limit = _int(query.get("limit", ["200"])[0], default=200)
+                    top = _int(query.get("top", ["20"])[0], default=20)
+                    size = _float(query.get("size", ["100"])[0]) or 100.0
+                    fee_bps = _float(query.get("fee_bps", ["10"])[0]) or 0.0
+                    max_close_hours = _float(query.get("max_close_hours", ["24"])[0])
+                    category = query.get("category", ["crypto"])[0]
+                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    if category:
+                        limitless_markets = _filter_by_category(limitless_markets, category)
+                        polymarket_markets = _filter_by_category(polymarket_markets, category)
+                    if max_close_hours is not None:
+                        limitless_markets = _filter_by_max_close_hours(limitless_markets, max_close_hours)
+                        polymarket_markets = _filter_by_max_close_hours(polymarket_markets, max_close_hours)
+                    rows = scan_depth_candidates(
+                        limitless_markets,
+                        polymarket_markets,
+                        size=size,
+                        min_net_edge=0.005,
+                        safety_buffer=0.002,
+                        min_match_score=0.25,
+                        allow_partial=False,
+                        fee_bps=fee_bps,
+                        min_profit=0.0,
+                        include_filtered=True,
+                    )
+                    rejected = [row for row in rows if row.rejection_reason]
+                    rejected.sort(key=lambda row: (
+                        _safe_num(getattr(row, "net_edge", None)),
+                        _safe_num(getattr(row, "depth_edge", None)),
+                        _safe_num(getattr(row, "top_of_book_edge", None)),
+                    ), reverse=True)
+                    self._send_json([
+                        {"candidate": _serializable(candidate_to_dict(row)), "risk": assess_candidate_risk(row)}
+                        for row in rejected[:top]
+                    ])
                     return
                 if parsed.path == "/api/paper-enter":
                     query = parse_qs(parsed.query)
@@ -148,6 +202,23 @@ def _float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _safe_num(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -999.0
+
+
+def _serializable(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _serializable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_serializable(item) for item in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
 
 
 def _filter_by_category(markets: list, category: str) -> list:
@@ -270,6 +341,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     <div class="tabs">
       <button class="tab active" data-view="overview">Обзор</button>
       <button class="tab" data-view="capital">Капитал</button>
+      <button class="tab" data-view="review">Проверка</button>
       <button class="tab" data-view="portfolio">Бумажный портфель</button>
       <button class="tab" data-view="coverage">Покрытие источников</button>
       <button class="tab" data-view="events">События</button>
@@ -345,6 +417,32 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <div class="panel"><h2>События монитора</h2><div class="events" id="eventsFull"></div></div>
     </section>
 
+    <section class="view" id="review">
+      <div class="panel">
+        <h2>Ручная проверка совпадения рынков</h2>
+        <div class="planner">
+          <label><div class="label">Файл очереди</div><input id="reviewPath" value="data/review-candidates.jsonl"></label>
+          <label><div class="label">Категория near-misses</div><input id="nearCategory" value="crypto"></label>
+          <label><div class="label">Часов до закрытия</div><input id="nearHours" type="number" value="24" min="1"></label>
+          <label><div class="label">Лимит загрузки</div><input id="nearLimit" type="number" value="200" min="10"></label>
+          <button class="primary" id="reviewRefreshBtn">Обновить очередь</button>
+          <button id="nearRefreshBtn">Найти near-misses</button>
+        </div>
+        <div class="explain">
+          <div>Сюда попадают сделки с высоким risk score: слишком большая доходность, разные источники цены, слабый текстовый матч или другие признаки, что рынки могут быть не про одно и то же.</div>
+          <div>Кнопки разметки сохраняют ответ в <strong>data/review-labels.jsonl</strong>. Потом этот файл можно использовать как датасет для обучения или настройки matcher.</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Очередь из монитора</h2>
+        <table><thead><tr><th>Сигнал</th><th>Риск</th><th>Рынки</th><th>Разметка</th></tr></thead><tbody id="reviewTable"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>Near-misses: сильные отклоненные кандидаты</h2>
+        <table><thead><tr><th>Сигнал</th><th>Причина отказа</th><th>Риск</th><th>Рынки</th></tr></thead><tbody id="nearTable"></tbody></table>
+      </div>
+    </section>
+
     <section class="view" id="portfolio">
       <div class="panel">
         <h2>Бумажный портфель</h2>
@@ -389,7 +487,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, review: [], near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -423,6 +521,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       state.snapshots = await json(`/api/snapshots?input=${q}&limit=300`);
       await refreshPlanner();
       await refreshPortfolio();
+      await refreshReview();
       if (!state.coverage) await refreshCoverage();
       render();
     }
@@ -443,6 +542,25 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const hours = encodeURIComponent(el("coverageHours").value || "");
       const limit = Number(el("coverageLimit").value || 200);
       state.coverage = await json(`/api/coverage?category=${category}&max_close_hours=${hours}&limit=${limit}`);
+    }
+
+    async function refreshReview() {
+      const path = encodeURIComponent(el("reviewPath").value || "data/review-candidates.jsonl");
+      state.review = await json(`/api/review?input=${path}&limit=100`);
+    }
+
+    async function refreshNearMisses() {
+      const category = encodeURIComponent(el("nearCategory").value || "");
+      const hours = encodeURIComponent(el("nearHours").value || "24");
+      const limit = Number(el("nearLimit").value || 200);
+      state.near = await json(`/api/near-misses?category=${category}&max_close_hours=${hours}&limit=${limit}&top=30&size=100&fee_bps=10`);
+      render();
+    }
+
+    async function labelReview(reviewId, label) {
+      await json(`/api/review-label?review_id=${encodeURIComponent(reviewId)}&label=${encodeURIComponent(label)}`);
+      await refreshReview();
+      render();
     }
 
     async function paperEnter() {
@@ -478,6 +596,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderPlan(state.plan || {});
       renderPortfolio(state.portfolio || {});
       renderCoverage(state.coverage || {});
+      renderReview(state.review || []);
+      renderNear(state.near || []);
       drawTrend(state.snapshots);
     }
 
@@ -548,6 +668,35 @@ _DASHBOARD_HTML = r"""<!doctype html>
         </tbody></table>`;
     }
 
+    function renderReview(rows) {
+      const pending = [...rows].reverse();
+      el("reviewTable").innerHTML = pending.length ? pending.map(row => {
+        const c = row.candidate || {}, r = row.risk || {}, label = row.label || null;
+        return `<tr>
+          <td><div class="route">#${row.review_id}</div><div>${c.outcome || ""} ${c.buy_source || ""}->${c.sell_source || ""}</div><div class="num ok">${pct(c.net_edge)} / ${money((c.net_edge || 0) * (c.executable_size || 0))}</div></td>
+          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br><span class="muted">score=${r.risk_score || 0}</span><br><span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
+          <td>${escapeHtml(c.buy_title || "")}<br><span class="muted">${escapeHtml(c.sell_title || "")}</span></td>
+          <td>${label ? `<span class="ok">${translateLabel(label.label)}</span>` : reviewButtons(row.review_id)}</td>
+        </tr>`;
+      }).join("") : `<tr><td colspan="4" class="muted">Очередь пуста. Включи monitor с --save-suspicious, чтобы наполнять ее автоматически.</td></tr>`;
+    }
+
+    function renderNear(rows) {
+      el("nearTable").innerHTML = rows.length ? rows.map(row => {
+        const c = row.candidate || {}, r = row.risk || {};
+        return `<tr>
+          <td><div class="route">${c.outcome || ""} ${c.buy_source || ""}->${c.sell_source || ""}</div><div class="num">${pct(c.net_edge)} / depth ${pct(c.depth_edge)}</div></td>
+          <td class="bad">${translateReason(c.rejection_reason || "")}</td>
+          <td><span class="${riskClass(r.risk_level)}">${translateRisk(r.risk_level)}</span><br><span class="muted">${(r.reasons || []).map(translateRiskReason).join(", ")}</span></td>
+          <td>${escapeHtml(c.buy_title || "")}<br><span class="muted">${escapeHtml(c.sell_title || "")}</span></td>
+        </tr>`;
+      }).join("") : `<tr><td colspan="4" class="muted">Нажми “Найти near-misses”, чтобы загрузить текущие отклоненные кандидаты.</td></tr>`;
+    }
+
+    function reviewButtons(id) {
+      return `<button onclick="labelReview('${id}', 'same_event')">То же событие</button> <button onclick="labelReview('${id}', 'different_event')">Не то</button> <button onclick="labelReview('${id}', 'unsure')">Сомнительно</button>`;
+    }
+
     function chips(obj, label) {
       return Object.entries(obj).map(([key, value]) => `<span class="chip">${label}: ${escapeHtml(key)} ${value}</span>`).join("");
     }
@@ -580,8 +729,44 @@ _DASHBOARD_HTML = r"""<!doctype html>
         insufficient_buy_cash: "недостаточно кэша для покупки",
         insufficient_sell_inventory: "недостаточно инвентаря для продажи",
         duplicate_market_exposure: "дублирующий риск на рынок",
+        incomplete_buy_fill: "стакан покупки не заполняет размер",
+        incomplete_sell_fill: "стакан продажи не заполняет размер",
+        net_edge_below_min: "net edge ниже минимума",
+        profit_below_min: "прибыль ниже минимума",
+        orderbook_unavailable: "стакан недоступен",
       };
       return map[value] || value;
+    }
+
+    function translateRisk(value) {
+      return { low: "низкий", medium: "средний", high: "высокий" }[value] || value || "";
+    }
+
+    function translateRiskReason(value) {
+      const map = {
+        hard_structural_warning: "жесткое структурное предупреждение",
+        price_source_differs: "разный источник цены",
+        price_pair_differs: "разная пара цены",
+        low_match_score: "слабый матч текста",
+        medium_match_score: "средний матч текста",
+        high_net_edge: "высокая доходность",
+        very_high_net_edge: "очень высокая доходность",
+        extreme_net_edge: "аномальная доходность",
+        large_top_depth_gap: "сильный разрыв top/depth",
+        fee_estimate_missing: "нет оценки комиссий",
+        filtered_candidate: "кандидат был отфильтрован",
+      };
+      return map[value] || value;
+    }
+
+    function translateLabel(value) {
+      return { same_event: "то же событие", different_event: "не то событие", unsure: "сомнительно" }[value] || value;
+    }
+
+    function riskClass(value) {
+      if (value === "high") return "bad";
+      if (value === "medium") return "warn";
+      return "ok";
     }
 
     function formatFee(row) {
@@ -612,6 +797,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("planBtn").addEventListener("click", () => refreshPlanner().then(render));
     el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
     el("coverageRefreshBtn").addEventListener("click", () => refreshCoverage().then(render));
+    el("reviewRefreshBtn").addEventListener("click", () => refreshReview().then(render));
+    el("nearRefreshBtn").addEventListener("click", refreshNearMisses);
     el("paperEnterBtn").addEventListener("click", paperEnter);
     el("paperSyncBtn").addEventListener("click", paperSync);
     loadFiles().then(refresh).catch(err => { el("subtitle").textContent = err.message; });

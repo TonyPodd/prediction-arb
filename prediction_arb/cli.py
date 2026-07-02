@@ -15,10 +15,12 @@ from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.dashboard import serve_dashboard
 from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_depth_size, scan_depth_candidates, sweep_depth
 from prediction_arb.matching import market_match_details
-from prediction_arb.monitor import build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.monitor import _opportunity_key, build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
+from prediction_arb.review_store import append_review_candidates
+from prediction_arb.risk import assess_candidate_risk
 from prediction_arb.scanner import scan_opportunities
 from prediction_arb.sources import limitless, polymarket
 from prediction_arb.telegram_bot import run_telegram_bot
@@ -146,6 +148,10 @@ def main() -> None:
     monitor_parser.add_argument("--webhook-format", choices=["generic", "discord"], default="generic")
     monitor_parser.add_argument("--telegram-bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"), help="Telegram bot token. Defaults to TELEGRAM_BOT_TOKEN.")
     monitor_parser.add_argument("--telegram-chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"), help="Telegram chat id. Defaults to TELEGRAM_CHAT_ID.")
+    monitor_parser.add_argument("--review-output", type=Path, default=Path("data/review-candidates.jsonl"), help="JSONL file for suspicious/manual-review candidates.")
+    monitor_parser.add_argument("--save-suspicious", action="store_true", help="Append suspicious opportunities to the manual-review dataset.")
+    monitor_parser.add_argument("--alert-suspicious", action="store_true", help="Send suspicious opportunities to Telegram for manual review.")
+    monitor_parser.add_argument("--suspicious-min-risk", type=int, default=25)
     monitor_parser.add_argument("--stop-on-error", action="store_true", help="Exit instead of appending an error snapshot when a scan fails.")
 
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
@@ -205,7 +211,7 @@ def main() -> None:
     telegram_bot_parser = subparsers.add_parser("telegram-bot", help="Run Telegram command bot for monitor status/report.")
     telegram_bot_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     telegram_bot_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
-    telegram_bot_parser.add_argument("--input", type=Path, default=Path("data/monitor-taiwan.jsonl"))
+    telegram_bot_parser.add_argument("--input", type=Path, default=Path("data/monitor-short-all.jsonl"))
     telegram_bot_parser.add_argument("--poll-interval", type=float, default=2.0)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Serve local monitor dashboard.")
@@ -500,6 +506,7 @@ def _monitor(args: argparse.Namespace) -> None:
                         f"active={snapshot.opportunity_count} new={snapshot.new_count} gone={snapshot.gone_count}"
                     )
                 _send_monitor_alert_if_needed(snapshot, args)
+                _handle_suspicious_candidates(snapshot, args)
             except Exception as exc:
                 if args.stop_on_error:
                     raise
@@ -679,6 +686,68 @@ def _send_monitor_alert_if_needed(snapshot: object, args: argparse.Namespace) ->
             raise ValueError("Both --telegram-bot-token and --telegram-chat-id are required for Telegram alerts.")
         payload = build_telegram_payload(args.telegram_chat_id, alert_text)
         _post_json(_telegram_send_message_url(args.telegram_bot_token), payload)
+
+
+def _handle_suspicious_candidates(snapshot: object, args: argparse.Namespace) -> None:
+    if not (args.save_suspicious or args.alert_suspicious):
+        return
+    new_keys = set(getattr(snapshot, "new_keys", []) or [])
+    suspicious = []
+    for candidate in getattr(snapshot, "opportunities", []) or []:
+        if new_keys and _opportunity_key(candidate) not in new_keys:
+            continue
+        risk = assess_candidate_risk(candidate)
+        if int(risk["risk_score"]) >= args.suspicious_min_risk or risk["manual_review"]:
+            suspicious.append(candidate)
+    if not suspicious:
+        return
+
+    records = append_review_candidates(suspicious, args.review_output, source="monitor") if args.save_suspicious or args.alert_suspicious else []
+    print(f"manual_review={len(records)} saved_to={args.review_output}")
+
+    if not args.alert_suspicious:
+        return
+    if not args.telegram_bot_token or not args.telegram_chat_id:
+        raise ValueError("Both --telegram-bot-token and --telegram-chat-id are required for suspicious Telegram alerts.")
+    for record in records[:5]:
+        payload = build_telegram_payload(
+            args.telegram_chat_id,
+            _format_suspicious_review_alert(record),
+            reply_markup=_review_inline_keyboard(str(record["review_id"])),
+        )
+        _post_json(_telegram_send_message_url(args.telegram_bot_token), payload)
+
+
+def _format_suspicious_review_alert(record: dict[str, object]) -> str:
+    candidate = record.get("candidate", {}) if isinstance(record.get("candidate"), dict) else {}
+    risk = record.get("risk", {}) if isinstance(record.get("risk"), dict) else {}
+    net_edge = _sort_number(candidate.get("net_edge"))
+    size = _sort_number(candidate.get("executable_size"))
+    profit = net_edge * size
+    reasons = ", ".join(str(item) for item in risk.get("reasons", []) if item) or "-"
+    return "\n".join(
+        [
+            f"Нужна ручная проверка #{record.get('review_id')}",
+            f"Риск: {risk.get('risk_level')} / score={risk.get('risk_score')}",
+            f"Маршрут: {candidate.get('outcome')} {candidate.get('buy_source')} -> {candidate.get('sell_source')}",
+            f"Net edge: {net_edge:.2%}, размер: {size:g}, оценка прибыли: ${profit:.2f}",
+            f"Купить: {candidate.get('buy_title')}",
+            f"Продать: {candidate.get('sell_title')}",
+            f"Причины: {reasons}",
+        ]
+    )
+
+
+def _review_inline_keyboard(review_id: str) -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "То же событие", "callback_data": f"review:same_event:{review_id}"},
+                {"text": "Не то", "callback_data": f"review:different_event:{review_id}"},
+                {"text": "Сомнительно", "callback_data": f"review:unsure:{review_id}"},
+            ]
+        ]
+    }
 
 
 def _telegram_send_message_url(bot_token: str) -> str:
