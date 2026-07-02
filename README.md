@@ -62,6 +62,13 @@ python -m prediction_arb.cli depth-scan --query taiwan --limit 20 --size 100
 python -m prediction_arb.cli depth-scan --query taiwan --limit 20 --size 100 --fee-bps 10 --include-filtered
 ```
 
+Show best rejected depth candidates:
+
+```bash
+python -m prediction_arb.cli near-misses --all-markets --limit 1000 --max-close-hours 24 --size 100 --fee-bps 10 --top 20
+python -m prediction_arb.cli near-misses --query btc --limit 1000 --size 100 --fee-bps 10
+```
+
 Sweep multiple sizes to estimate where the edge starts breaking:
 
 ```bash
@@ -154,6 +161,7 @@ deadline: UTC minute when available
 - `scan` rejects structurally mismatched pairs, including different condition types, assets, directions, thresholds, recurring intervals, or semantic deadlines.
 - `coverage` shows what each source is actually returning by condition type, asset, interval, and close window. Use it when broad short-term scans are empty.
 - `depth-scan` fetches order books and estimates executable average buy/sell prices for a requested share size.
+- `near-misses` runs depth scanning with filtered candidates included and ranks rejected routes by net/depth/top-of-book edge so empty monitors are easier to explain.
 - `depth-sweep` repeats depth scanning across multiple share sizes and reports best net edge/profit per size.
 - `depth-max` searches a geometric size grid and returns the largest size that still passes `--min-net-edge`.
 - Fee estimates are per-share. Polymarket fees are zero when `feesEnabled=false`; otherwise the scanner uses `rate * price * (1 - price)` from `feeSchedule` or the documented taker fallback. Limitless exposes fee flags but not the full curve in the market payload, so use `--fee-bps` as a conservative manual overlay.

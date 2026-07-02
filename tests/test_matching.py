@@ -83,7 +83,7 @@ class MatchingTests(unittest.TestCase):
 
         self.assertEqual(parsed.interval_minutes, 5)
 
-    def test_interval_ignores_resolution_candle_description(self) -> None:
+    def test_dated_up_down_uses_daily_interval_not_resolution_candle(self) -> None:
         parsed = condition_from_market(
             raw_market(
                 "polymarket",
@@ -95,7 +95,50 @@ class MatchingTests(unittest.TestCase):
             )
         )
 
-        self.assertIsNone(parsed.interval_minutes)
+        self.assertEqual(parsed.interval_minutes, 1440)
+
+    def test_price_source_and_pair_warnings_are_soft(self) -> None:
+        left = raw_market(
+            "limitless",
+            "BTC Up or Down - Hourly",
+            {"description": "Resolution source is Chainlink BTC/USD."},
+            "2026-07-01T19:00:00Z",
+        )
+        right = raw_market(
+            "polymarket",
+            "Bitcoin Up or Down - July 1, 2PM ET",
+            {"description": "Resolution source is Binance BTC/USDT close prices."},
+            "2026-07-01T19:00:00Z",
+        )
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.price_source, "chainlink")
+        self.assertEqual(details.right_condition.price_source, "binance")
+        self.assertEqual(details.left_condition.price_pair, "btc/usd")
+        self.assertEqual(details.right_condition.price_pair, "btc/usdt")
+        self.assertIn("price_source_differs", details.warnings)
+        self.assertIn("price_pair_differs", details.warnings)
+
+    def test_polymarket_hourly_title_extracts_interval(self) -> None:
+        parsed = condition_from_market(market("polymarket", "Bitcoin Up or Down - July 2, 6AM ET"))
+
+        self.assertEqual(parsed.interval_minutes, 60)
+
+    def test_polymarket_dated_up_down_extracts_daily_interval(self) -> None:
+        parsed = condition_from_market(market("polymarket", "S&P 500 (SPX) Up or Down on July 2?"))
+
+        self.assertEqual(parsed.interval_minutes, 1440)
+
+    def test_open_up_down_differs_from_close_directional_market(self) -> None:
+        left = market("limitless", "S&P 500 ETF (SPY) Up or Down - Weekly")
+        right = market("polymarket", "S&P 500 (SPX) Opens Up or Down on July 2?")
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.kind, "directional_up_down")
+        self.assertEqual(details.right_condition.kind, "open_up_down")
+        self.assertIn("condition_kind_differs", details.warnings)
 
 
 if __name__ == "__main__":

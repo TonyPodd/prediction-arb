@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from argparse import Namespace
 
-from prediction_arb.cli import _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _telegram_send_message_url, _validate_monitor_scope
+from prediction_arb.cli import _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
 from prediction_arb.models import Market, TopOfBook
 
 
@@ -88,6 +88,12 @@ class CliTests(unittest.TestCase):
             _validate_monitor_scope(Namespace(query=[], category=[], all_markets=False))
 
         _validate_monitor_scope(Namespace(query=["btc"], category=[], all_markets=False))
+
+    def test_near_miss_sort_key_prefers_net_edge(self) -> None:
+        weak = Namespace(net_edge=0.01, depth_edge=0.2, top_of_book_edge=0.3, match_score=0.9)
+        strong = Namespace(net_edge=0.02, depth_edge=0.1, top_of_book_edge=0.1, match_score=0.1)
+
+        self.assertGreater(_near_miss_sort_key(strong), _near_miss_sort_key(weak))
 
 
 if __name__ == "__main__":

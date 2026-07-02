@@ -202,11 +202,11 @@ def _tokens(value: str) -> set[str]:
 
 
 _DASHBOARD_HTML = r"""<!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Prediction Arb Console</title>
+  <title>Панель арбитража прогнозных рынков</title>
   <style>
     :root {
       --bg: #f4f6f8; --panel: #fff; --ink: #16202a; --muted: #657383;
@@ -262,106 +262,106 @@ _DASHBOARD_HTML = r"""<!doctype html>
 <body>
   <header>
     <div class="topline">
-      <div><h1>Prediction Arb Console</h1><div class="muted" id="subtitle">Loading monitor data</div></div>
-      <div class="controls"><select id="fileSelect"></select><button class="primary" id="refreshBtn">Refresh</button></div>
+      <div><h1>Панель арбитража прогнозных рынков</h1><div class="muted" id="subtitle">Загружаю данные монитора</div></div>
+      <div class="controls"><select id="fileSelect"></select><button class="primary" id="refreshBtn">Обновить</button></div>
     </div>
     <div class="tabs">
-      <button class="tab active" data-view="overview">Overview</button>
-      <button class="tab" data-view="capital">Capital Planner</button>
-      <button class="tab" data-view="portfolio">Paper Portfolio</button>
-      <button class="tab" data-view="coverage">Source Coverage</button>
-      <button class="tab" data-view="events">Events</button>
+      <button class="tab active" data-view="overview">Обзор</button>
+      <button class="tab" data-view="capital">Капитал</button>
+      <button class="tab" data-view="portfolio">Бумажный портфель</button>
+      <button class="tab" data-view="coverage">Покрытие источников</button>
+      <button class="tab" data-view="events">События</button>
     </div>
   </header>
   <main>
     <section class="metrics">
-      <div class="metric"><div class="label">Snapshots</div><div class="value" id="snapshots">0</div></div>
-      <div class="metric"><div class="label">Active</div><div class="value" id="active">0</div></div>
-      <div class="metric"><div class="label">Routes Seen</div><div class="value" id="routes">0</div></div>
-      <div class="metric"><div class="label">Best Edge</div><div class="value ok" id="bestEdge">0%</div></div>
-      <div class="metric"><div class="label">Best Profit</div><div class="value ok" id="bestProfit">$0</div></div>
-      <div class="metric"><div class="label">Errors</div><div class="value" id="errors">0</div></div>
+      <div class="metric"><div class="label">Снимки</div><div class="value" id="snapshots">0</div></div>
+      <div class="metric"><div class="label">Активно сейчас</div><div class="value" id="active">0</div></div>
+      <div class="metric"><div class="label">Маршрутов найдено</div><div class="value" id="routes">0</div></div>
+      <div class="metric"><div class="label">Лучшая сейчас</div><div class="value ok" id="bestEdge">0%</div></div>
+      <div class="metric"><div class="label">Прибыль сейчас</div><div class="value ok" id="bestProfit">$0</div></div>
+      <div class="metric"><div class="label">Ошибки</div><div class="value" id="errors">0</div></div>
     </section>
 
     <section class="view active" id="overview">
       <div class="grid">
-        <div class="panel"><h2>Best Edge Trend</h2><canvas id="trend" width="900" height="260"></canvas></div>
-        <div class="panel"><h2>Latest Events</h2><div class="events" id="eventsSmall"></div></div>
+        <div class="panel"><h2>Динамика лучшей исполнимой доходности</h2><canvas id="trend" width="900" height="260"></canvas></div>
+        <div class="panel"><h2>Последние события</h2><div class="events" id="eventsSmall"></div></div>
       </div>
       <div class="panel">
-        <h2>Best Routes</h2>
-        <table><thead><tr><th>Route</th><th>Market</th><th>Edge</th><th>Size</th><th>Est. Profit</th><th>Detected</th></tr></thead><tbody id="routesTable"></tbody></table>
+        <h2>Активные маршруты сейчас</h2>
+        <table><thead><tr><th>Маршрут</th><th>Рынок</th><th>Net edge</th><th>Размер</th><th>Оценка прибыли</th><th>Обнаружено</th></tr></thead><tbody id="routesTable"></tbody></table>
       </div>
     </section>
 
     <section class="view" id="capital">
       <div class="panel">
-        <h2>Capital Planner</h2>
+        <h2>Планировщик капитала</h2>
         <div class="planner">
-          <label><div class="label">Limitless USDC</div><input id="limitlessCash" type="number" value="250" min="0" step="10"></label>
-          <label><div class="label">Polymarket USDC</div><input id="polymarketCash" type="number" value="250" min="0" step="10"></label>
-          <label><div class="label">Max allocations</div><input id="allocationLimit" type="number" value="10" min="1" step="1"></label>
-          <label class="switch"><input id="assumeInventory" type="checkbox" checked> assume sell-side inventory</label>
-          <button class="primary" id="planBtn">Calculate</button>
+          <label><div class="label">USDC на Limitless</div><input id="limitlessCash" type="number" value="250" min="0" step="10"></label>
+          <label><div class="label">USDC на Polymarket</div><input id="polymarketCash" type="number" value="250" min="0" step="10"></label>
+          <label><div class="label">Макс. позиций</div><input id="allocationLimit" type="number" value="10" min="1" step="1"></label>
+          <label class="switch"><input id="assumeInventory" type="checkbox" checked> считать, что sell-инвентарь есть</label>
+          <button class="primary" id="planBtn">Посчитать</button>
         </div>
-        <p class="muted">Sell leg usually requires holding outcome shares on the sell platform. Disable the checkbox to see missing inventory rejections.</p>
+        <p class="muted">Для sell leg обычно нужны outcome shares на площадке продажи. Сними галочку, чтобы увидеть отказы из-за нехватки инвентаря.</p>
       </div>
       <div class="metrics">
-        <div class="metric"><div class="label">Allocated</div><div class="value" id="planAllocated">0</div></div>
-        <div class="metric"><div class="label">Rejected</div><div class="value" id="planRejected">0</div></div>
-        <div class="metric"><div class="label">Buy Cash Used</div><div class="value" id="planCashUsed">$0</div></div>
-        <div class="metric"><div class="label">Est. Profit</div><div class="value ok" id="planProfit">$0</div></div>
-        <div class="metric"><div class="label">Limitless Left</div><div class="value" id="limitlessLeft">$0</div></div>
-        <div class="metric"><div class="label">Polymarket Left</div><div class="value" id="polymarketLeft">$0</div></div>
+        <div class="metric"><div class="label">Выбрано</div><div class="value" id="planAllocated">0</div></div>
+        <div class="metric"><div class="label">Отклонено</div><div class="value" id="planRejected">0</div></div>
+        <div class="metric"><div class="label">Кэш на покупки</div><div class="value" id="planCashUsed">$0</div></div>
+        <div class="metric"><div class="label">Оценка прибыли</div><div class="value ok" id="planProfit">$0</div></div>
+        <div class="metric"><div class="label">Остаток Limitless</div><div class="value" id="limitlessLeft">$0</div></div>
+        <div class="metric"><div class="label">Остаток Polymarket</div><div class="value" id="polymarketLeft">$0</div></div>
       </div>
       <div class="panel">
-        <h2>Allocation Plan</h2>
-        <table><thead><tr><th>Route</th><th>Buy Cash</th><th>Sell Inventory</th><th>Edge</th><th>Profit</th></tr></thead><tbody id="allocationTable"></tbody></table>
+        <h2>План распределения</h2>
+        <table><thead><tr><th>Маршрут</th><th>Кэш покупки</th><th>Инвентарь продажи</th><th>Edge</th><th>Прибыль</th></tr></thead><tbody id="allocationTable"></tbody></table>
       </div>
       <div class="panel">
-        <h2>Rejected Signals</h2>
-        <table><thead><tr><th>Route</th><th>Reason</th><th>Needed</th></tr></thead><tbody id="rejectedTable"></tbody></table>
+        <h2>Отклоненные сигналы</h2>
+        <table><thead><tr><th>Маршрут</th><th>Причина</th><th>Нужно</th></tr></thead><tbody id="rejectedTable"></tbody></table>
       </div>
     </section>
 
     <section class="view" id="events">
-      <div class="panel"><h2>Monitor Events</h2><div class="events" id="eventsFull"></div></div>
+      <div class="panel"><h2>События монитора</h2><div class="events" id="eventsFull"></div></div>
     </section>
 
     <section class="view" id="portfolio">
       <div class="panel">
-        <h2>Paper Portfolio</h2>
+        <h2>Бумажный портфель</h2>
         <div class="planner">
-          <label><div class="label">Portfolio file</div><input id="portfolioPath" value="data/portfolio.json"></label>
-          <label><div class="label">Max new entries</div><input id="paperLimit" type="number" value="5" min="1"></label>
-          <label class="switch"><input id="paperRequireInventory" type="checkbox"> require sell inventory</label>
-          <button class="primary" id="paperEnterBtn">Paper Enter Latest</button>
-          <button id="paperSyncBtn">Sync Marks</button>
-          <button id="portfolioRefreshBtn">Refresh Portfolio</button>
+          <label><div class="label">Файл портфеля</div><input id="portfolioPath" value="data/portfolio.json"></label>
+          <label><div class="label">Макс. новых входов</div><input id="paperLimit" type="number" value="5" min="1"></label>
+          <label class="switch"><input id="paperRequireInventory" type="checkbox"> требовать sell-инвентарь</label>
+          <button class="primary" id="paperEnterBtn">Войти по последним</button>
+          <button id="paperSyncBtn">Обновить оценки</button>
+          <button id="portfolioRefreshBtn">Обновить портфель</button>
         </div>
       </div>
       <div class="metrics">
-        <div class="metric"><div class="label">Open Positions</div><div class="value" id="portfolioOpen">0</div></div>
-        <div class="metric"><div class="label">Open Notional</div><div class="value" id="portfolioNotional">$0</div></div>
-        <div class="metric"><div class="label">Open Est. Profit</div><div class="value ok" id="portfolioProfit">$0</div></div>
-        <div class="metric"><div class="label">Current Est. Profit</div><div class="value ok" id="portfolioCurrentProfit">$0</div></div>
+        <div class="metric"><div class="label">Открытые позиции</div><div class="value" id="portfolioOpen">0</div></div>
+        <div class="metric"><div class="label">Открытый notional</div><div class="value" id="portfolioNotional">$0</div></div>
+        <div class="metric"><div class="label">Прибыль на входе</div><div class="value ok" id="portfolioProfit">$0</div></div>
+        <div class="metric"><div class="label">Текущая прибыль</div><div class="value ok" id="portfolioCurrentProfit">$0</div></div>
         <div class="metric"><div class="label">Realized PnL</div><div class="value" id="portfolioPnl">$0</div></div>
-        <div class="metric"><div class="label">Limitless Cash</div><div class="value" id="portfolioLimitless">$0</div></div>
+        <div class="metric"><div class="label">Кэш Limitless</div><div class="value" id="portfolioLimitless">$0</div></div>
       </div>
       <div class="panel">
-        <h2>Open Paper Positions</h2>
-        <table><thead><tr><th>Route</th><th>Cash</th><th>Inventory</th><th>Entry Edge</th><th>Est. Profit</th><th>Opened</th></tr></thead><tbody id="portfolioTable"></tbody></table>
+        <h2>Открытые бумажные позиции</h2>
+        <table><thead><tr><th>Маршрут</th><th>Кэш</th><th>Инвентарь</th><th>Edge входа</th><th>Оценка прибыли</th><th>Открыта</th></tr></thead><tbody id="portfolioTable"></tbody></table>
       </div>
     </section>
 
     <section class="view" id="coverage">
       <div class="panel">
-        <h2>Source Coverage</h2>
+        <h2>Покрытие источников</h2>
         <div class="planner">
-          <label><div class="label">Category filter</div><input id="coverageCategory" value="crypto"></label>
-          <label><div class="label">Max close hours</div><input id="coverageHours" type="number" value="24" min="1"></label>
-          <label><div class="label">Fetch limit</div><input id="coverageLimit" type="number" value="200" min="10"></label>
-          <button class="primary" id="coverageRefreshBtn">Analyze</button>
+          <label><div class="label">Фильтр категории</div><input id="coverageCategory" value="crypto"></label>
+          <label><div class="label">Макс. часов до закрытия</div><input id="coverageHours" type="number" value="24" min="1"></label>
+          <label><div class="label">Лимит загрузки</div><input id="coverageLimit" type="number" value="200" min="10"></label>
+          <button class="primary" id="coverageRefreshBtn">Анализировать</button>
         </div>
       </div>
       <div class="coverage-grid">
@@ -444,8 +444,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     function render() {
       const r = state.report || {};
-      const best = (r.best_routes || [])[0] || {};
-      el("subtitle").textContent = `${r.input || state.input} | last success ${r.last_success_detected_at || "n/a"}`;
+      const latestRoutes = r.latest_routes || [];
+      const historicalRoutes = r.best_routes || [];
+      const best = (latestRoutes || [])[0] || {};
+      el("subtitle").textContent = `${r.input || state.input} | последний успешный снимок ${r.last_success_detected_at || "n/a"}`;
       el("snapshots").textContent = r.snapshots || 0;
       el("active").textContent = r.latest_active_count || 0;
       el("routes").textContent = r.unique_routes_seen || 0;
@@ -453,7 +455,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("bestProfit").textContent = money(best.estimated_profit);
       el("errors").textContent = r.error_snapshots || 0;
       el("errors").className = (r.error_snapshots || 0) ? "value warn" : "value";
-      renderRoutes(r.best_routes || []);
+      renderRoutes(latestRoutes, historicalRoutes);
       renderEvents(el("eventsSmall"), state.snapshots.slice(-12).reverse());
       renderEvents(el("eventsFull"), state.snapshots.slice(-80).reverse());
       renderPlan(state.plan || {});
@@ -462,8 +464,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
       drawTrend(state.snapshots);
     }
 
-    function renderRoutes(rows) {
-      el("routesTable").innerHTML = rows.map(row => `
+    function renderRoutes(rows, historicalRows) {
+      const activeHtml = rows.length ? rows.map(row => `
         <tr>
           <td><div class="route">${row.outcome || ""} ${row.route || ""}</div><div class="muted">${row.key || ""}</div></td>
           <td>${escapeHtml(row.buy_title || "")}<br><span class="muted">${escapeHtml(row.sell_title || "")}</span></td>
@@ -471,7 +473,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <td class="num">${fmt.format(row.executable_size || 0)}</td>
           <td class="num ok">${money(row.estimated_profit)}</td>
           <td class="num">${row.detected_at || ""}</td>
-        </tr>`).join("");
+        </tr>`).join("") : `<tr><td colspan="6" class="muted">Сейчас активных исполнимых маршрутов нет.</td></tr>`;
+      const historical = (historicalRows || [])[0];
+      const historicalHtml = historical ? `<tr><td colspan="6" class="muted">Исторический максимум в файле: ${pct(historical.net_edge)} / ${money(historical.estimated_profit)}. Это не обязательно активная сейчас сделка.</td></tr>` : "";
+      el("routesTable").innerHTML = activeHtml + historicalHtml;
     }
 
     function renderPlan(plan) {
@@ -486,7 +491,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <td class="num">${money(row.buy_cash_required)}</td><td class="num">${fmt.format(row.sell_inventory_required || 0)}<br><span class="muted">${row.sell_inventory_key}</span></td>
         <td class="num ok">${pct(row.net_edge)}</td><td class="num ok">${money(row.estimated_profit)}</td></tr>`).join("");
       el("rejectedTable").innerHTML = (plan.rejected || []).slice(0, 20).map(row => `
-        <tr><td>${row.outcome || ""} ${row.buy_source || ""}->${row.sell_source || ""}</td><td class="bad">${row.planner_rejection_reason || ""}</td>
+        <tr><td>${row.outcome || ""} ${row.buy_source || ""}->${row.sell_source || ""}</td><td class="bad">${translateReason(row.planner_rejection_reason || "")}</td>
         <td class="num">${money(row.buy_cash_required)} / ${fmt.format(row.sell_inventory_required || 0)} shares</td></tr>`).join("");
     }
 
@@ -514,13 +519,13 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const rows = source.examples || [];
       el(targetId).innerHTML = `
         <div class="metrics">
-          <div class="metric"><div class="label">Markets</div><div class="value">${source.count || 0}</div></div>
-          <div class="metric"><div class="label">Short-term 24h</div><div class="value">${source.short_term_24h_count || 0}</div></div>
+          <div class="metric"><div class="label">Рынки</div><div class="value">${source.count || 0}</div></div>
+          <div class="metric"><div class="label">Краткосрочные 24ч</div><div class="value">${source.short_term_24h_count || 0}</div></div>
         </div>
         <div class="chips">${chips(source.by_condition_kind || {}, "kind")}</div>
         <div class="chips">${chips(source.by_asset || {}, "asset")}</div>
         <div class="chips">${chips(source.by_interval_minutes || {}, "interval")}</div>
-        <table><thead><tr><th>Market</th><th>Kind</th><th>Asset</th><th>Interval</th><th>Close</th></tr></thead><tbody>
+        <table><thead><tr><th>Рынок</th><th>Тип</th><th>Актив</th><th>Интервал</th><th>Закрытие</th></tr></thead><tbody>
           ${rows.map(row => `<tr><td>${escapeHtml(row.title || "")}</td><td>${(row.condition || {}).kind || ""}</td><td>${(row.condition || {}).asset || ""}</td><td class="num">${(row.condition || {}).interval_minutes || ""}</td><td class="num">${row.close_time || ""}</td></tr>`).join("")}
         </tbody></table>`;
     }
@@ -531,8 +536,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     function renderEvents(target, rows) {
       target.innerHTML = rows.map(row => {
-        if (row.type === "error") return `<div class="event error"><strong class="bad">Error</strong><br><span class="muted">${row.detected_at}</span><br>${escapeHtml(row.error || "")}</div>`;
-        return `<div class="event"><strong>${row.opportunity_count || 0} active</strong> <span class="ok">+${row.new_count || 0}</span> <span class="bad">-${row.gone_count || 0}</span><br><span class="muted">${row.detected_at}</span><br><span class="muted">${escapeHtml(row.query || "")}</span></div>`;
+        if (row.type === "error") return `<div class="event error"><strong class="bad">Ошибка</strong><br><span class="muted">${row.detected_at}</span><br>${escapeHtml(row.error || "")}</div>`;
+        return `<div class="event"><strong>${row.opportunity_count || 0} активно</strong> <span class="ok">+${row.new_count || 0}</span> <span class="bad">-${row.gone_count || 0}</span><br><span class="muted">${row.detected_at}</span><br><span class="muted">${escapeHtml(row.query || "")}</span></div>`;
       }).join("");
     }
 
@@ -549,7 +554,16 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const maxEdge = Math.max(...points.map(p => p.edge), 0.01);
       ctx.strokeStyle = "#1f6fb2"; ctx.lineWidth = 2; ctx.beginPath();
       points.forEach((p, i) => { const x = pad + (w - pad * 2) * i / (points.length - 1); const y = h - pad - (h - pad * 2) * p.edge / maxEdge; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-      ctx.stroke(); ctx.fillStyle = "#16202a"; ctx.fillText("best net edge", pad, 18); ctx.fillStyle = "#1f6fb2"; ctx.fillText(pct(maxEdge), w - 86, 18);
+      ctx.stroke(); ctx.fillStyle = "#16202a"; ctx.fillText("лучший net edge", pad, 18); ctx.fillStyle = "#1f6fb2"; ctx.fillText(pct(maxEdge), w - 86, 18);
+    }
+
+    function translateReason(value) {
+      const map = {
+        insufficient_buy_cash: "недостаточно кэша для покупки",
+        insufficient_sell_inventory: "недостаточно инвентаря для продажи",
+        duplicate_market_exposure: "дублирующий риск на рынок",
+      };
+      return map[value] || value;
     }
 
     function escapeHtml(value) { return String(value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }

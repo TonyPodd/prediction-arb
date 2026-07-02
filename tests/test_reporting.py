@@ -72,6 +72,7 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(summary["total_new_events"], 1)
         self.assertEqual(summary["latest_active_count"], 1)
         self.assertEqual(summary["unique_routes_seen"], 1)
+        self.assertEqual(summary["latest_routes"][0]["net_edge"], 0.02)
         self.assertEqual(summary["best_routes"][0]["net_edge"], 0.02)
         self.assertEqual(summary["best_routes"][0]["estimated_profit"], 2.0)
 
@@ -80,6 +81,7 @@ class ReportingTests(unittest.TestCase):
             summary = summarize_monitor_history(Path(tmp) / "missing.jsonl")
 
         self.assertEqual(summary["snapshots"], 0)
+        self.assertEqual(summary["latest_routes"], [])
         self.assertEqual(summary["best_routes"], [])
 
     def test_read_monitor_history_returns_jsonl_rows(self) -> None:

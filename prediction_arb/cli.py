@@ -80,6 +80,22 @@ def main() -> None:
     depth_parser.add_argument("--include-filtered", action="store_true")
     depth_parser.add_argument("--output", type=Path)
 
+    near_parser = subparsers.add_parser("near-misses", help="Show best rejected depth candidates with rejection reasons.")
+    near_parser.add_argument("--query", action="append", default=[])
+    near_parser.add_argument("--category", action="append", default=[])
+    near_parser.add_argument("--all-markets", action="store_true")
+    near_parser.add_argument("--limit", type=int, default=200)
+    near_parser.add_argument("--size", type=float, default=100.0)
+    near_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    near_parser.add_argument("--min-profit", type=float, default=0.0)
+    near_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    near_parser.add_argument("--fee-bps", type=float, default=0.0)
+    near_parser.add_argument("--min-match-score", type=float, default=0.25)
+    near_parser.add_argument("--min-close-minutes", type=float)
+    near_parser.add_argument("--max-close-hours", type=float)
+    near_parser.add_argument("--top", type=int, default=20)
+    near_parser.add_argument("--output", type=Path)
+
     sweep_parser = subparsers.add_parser("depth-sweep", help="Run depth scan across multiple share sizes.")
     sweep_parser.add_argument("--query", required=True)
     sweep_parser.add_argument("--limit", type=int, default=50)
@@ -210,6 +226,8 @@ def main() -> None:
         _coverage(args)
     elif args.command == "depth-scan":
         _depth_scan(args)
+    elif args.command == "near-misses":
+        _near_misses(args)
     elif args.command == "depth-sweep":
         _depth_sweep(args)
     elif args.command == "depth-max":
@@ -370,6 +388,28 @@ def _depth_scan(args: argparse.Namespace) -> None:
         include_filtered=args.include_filtered,
     )
     payload = [_serializable(asdict(item)) for item in rows]
+    _write_or_print(payload, args.output)
+
+
+def _near_misses(args: argparse.Namespace) -> None:
+    if not args.query and not args.category:
+        args.all_markets = True
+    limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+    rows = scan_depth_candidates(
+        limitless_markets,
+        polymarket_markets,
+        size=args.size,
+        min_net_edge=args.min_net_edge,
+        safety_buffer=args.safety_buffer,
+        min_match_score=args.min_match_score,
+        allow_partial=False,
+        fee_bps=args.fee_bps,
+        min_profit=args.min_profit,
+        include_filtered=True,
+    )
+    rejected = [row for row in rows if row.rejection_reason]
+    rejected.sort(key=_near_miss_sort_key, reverse=True)
+    payload = [_serializable(asdict(item)) for item in rejected[: args.top]]
     _write_or_print(payload, args.output)
 
 
@@ -778,6 +818,22 @@ def _has_hard_warnings(warnings: list[str]) -> bool:
         }
         & set(warnings)
     )
+
+
+def _near_miss_sort_key(row: object) -> tuple[float, float, float, float]:
+    return (
+        _sort_number(getattr(row, "net_edge", None)),
+        _sort_number(getattr(row, "depth_edge", None)),
+        _sort_number(getattr(row, "top_of_book_edge", None)),
+        _sort_number(getattr(row, "match_score", None)),
+    )
+
+
+def _sort_number(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -999.0
 
 
 def _match_text(market: object) -> str:

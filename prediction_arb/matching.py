@@ -14,6 +14,8 @@ class Condition:
     direction: str | None
     threshold: float | None
     interval_minutes: int | None
+    price_source: str | None
+    price_pair: str | None
     deadline: str | None
 
 
@@ -112,6 +114,8 @@ def condition_from_market(market: Market) -> Condition:
         direction=_direction(text, kind),
         threshold=_threshold(text),
         interval_minutes=_interval_minutes(summary_text),
+        price_source=_price_source(text),
+        price_pair=_price_pair(text),
         deadline=_semantic_deadline(text) or _deadline(market.close_time),
     )
 
@@ -180,6 +184,8 @@ def _date_tokens(tokens: set[str]) -> set[str]:
 
 def _condition_kind(value: str) -> str:
     normalized = value.lower()
+    if re.search(r"\bopens?\s+up\s+or\s+down\b", normalized):
+        return "open_up_down"
     if "up or down" in normalized:
         return "directional_up_down"
     if re.search(r"\b(before|by|by end of)\b", normalized):
@@ -207,6 +213,10 @@ def _condition_warnings(left: Condition, right: Condition) -> list[str]:
         warnings.append("threshold_differs")
     if left.interval_minutes is not None and right.interval_minutes is not None and left.interval_minutes != right.interval_minutes:
         warnings.append("interval_differs")
+    if left.price_source and right.price_source and left.price_source != right.price_source:
+        warnings.append("price_source_differs")
+    if left.price_pair and right.price_pair and left.price_pair != right.price_pair:
+        warnings.append("price_pair_differs")
     if left.deadline and right.deadline and left.deadline != right.deadline:
         warnings.append("deadline_differs")
     return warnings
@@ -231,7 +241,7 @@ def _asset(value: str) -> str | None:
 
 def _direction(value: str, kind: str) -> str | None:
     normalized = value.lower()
-    if kind == "directional_up_down":
+    if kind in {"directional_up_down", "open_up_down"}:
         return "up_or_down"
     if kind == "deadline_yes_no":
         return "yes_by_deadline"
@@ -260,6 +270,22 @@ def _threshold(value: str) -> float | None:
     return number
 
 
+def _price_source(value: str) -> str | None:
+    normalized = value.lower()
+    for source in ("chainlink", "binance", "coinbase", "kraken", "okx", "bybit"):
+        if re.search(rf"\b{source}\b", normalized):
+            return source
+    return None
+
+
+def _price_pair(value: str) -> str | None:
+    normalized = value.lower()
+    match = re.search(r"\b(btc|eth|sol|xrp|bnb|doge|hype)[-/]?(usd|usdt|usdc)\b", normalized)
+    if not match:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
 def _interval_minutes(value: str) -> int | None:
     normalized = value.lower()
     patterns = [
@@ -275,7 +301,11 @@ def _interval_minutes(value: str) -> int | None:
             return int(match.group(1)) * multiplier
     if re.search(r"\bhourly\b", normalized):
         return 60
+    if re.search(r"\bup\s+or\s+down\s+-\s+[a-z]+\s+\d{1,2},\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\s+et\b", normalized):
+        return 60
     if re.search(r"\bdaily\b", normalized):
+        return 24 * 60
+    if re.search(r"\bup\s+or\s+down\s+on\s+[a-z]+\s+\d{1,2}\b", normalized):
         return 24 * 60
     if re.search(r"\bweekly\b", normalized):
         return 7 * 24 * 60

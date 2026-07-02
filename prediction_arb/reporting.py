@@ -26,6 +26,11 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
 
     latest_success = success_snapshots[-1] if success_snapshots else {}
     latest = snapshots[-1] if snapshots else {}
+    latest_routes = sorted(
+        [_opportunity_summary(item, latest_success) for item in latest_success.get("opportunities", [])],
+        key=lambda item: item["net_edge"] if item["net_edge"] is not None else -999.0,
+        reverse=True,
+    )
     best_routes = sorted(
         best_by_key.values(),
         key=lambda item: item["net_edge"] if item["net_edge"] is not None else -999.0,
@@ -45,6 +50,7 @@ def summarize_monitor_history(path: Path, top: int = 10) -> dict:
         "latest_active_count": latest_success.get("opportunity_count", 0),
         "latest_active_keys": latest_success.get("active_keys", []),
         "unique_routes_seen": len(best_by_key),
+        "latest_routes": latest_routes[:top],
         "best_routes": best_routes[:top],
     }
 
