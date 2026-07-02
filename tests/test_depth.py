@@ -117,6 +117,42 @@ class DepthTests(unittest.TestCase):
         self.assertIn("limitless_no_fee_field", notes)
         self.assertIn("manual_fee_buffer_missing", notes)
 
+    def test_route_fixed_cost_is_divided_by_size(self) -> None:
+        buy_market = Market("polymarket", "buy", "Buy", None, None, None, None, TopOfBook(), {"feesEnabled": False})
+        sell_market = Market("limitless", "sell", "Sell", None, None, None, None, TopOfBook(), {})
+        from prediction_arb.depth import _fee_estimate_per_share
+
+        fee, notes = _fee_estimate_per_share(
+            buy_market,
+            sell_market,
+            0.40,
+            0.45,
+            0,
+            executable_size=100,
+            route_fixed_costs={"polymarket->limitless": 2.0},
+        )
+
+        self.assertAlmostEqual(fee, 0.02)
+        self.assertIn("route_fixed_cost_usdc=polymarket->limitless:2.0", notes)
+
+    def test_route_cost_bps_applies_to_buy_and_sell_prices(self) -> None:
+        buy_market = Market("polymarket", "buy", "Buy", None, None, None, None, TopOfBook(), {"feesEnabled": False})
+        sell_market = Market("limitless", "sell", "Sell", None, None, None, None, TopOfBook(), {})
+        from prediction_arb.depth import _fee_estimate_per_share
+
+        fee, notes = _fee_estimate_per_share(
+            buy_market,
+            sell_market,
+            0.40,
+            0.45,
+            0,
+            executable_size=100,
+            route_cost_bps={"*": 25},
+        )
+
+        self.assertAlmostEqual(fee, (0.40 + 0.45) * 0.0025)
+        self.assertIn("route_cost_bps=polymarket->limitless:25.0", notes)
+
     def test_public_fee_estimator_matches_market_fee(self) -> None:
         market = Market("polymarket", "m", "M", None, None, None, None, TopOfBook(), {"feesEnabled": False})
         from prediction_arb.depth import estimate_market_taker_fee_per_share

@@ -67,6 +67,8 @@ def scan_depth_opportunities(
     allow_partial: bool = False,
     fee_bps: float = 0.0,
     min_profit: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
 ) -> list[DepthOpportunity]:
     rows = scan_depth_candidates(
         limitless_markets=limitless_markets,
@@ -78,6 +80,8 @@ def scan_depth_opportunities(
         allow_partial=allow_partial,
         fee_bps=fee_bps,
         min_profit=min_profit,
+        route_fixed_costs=route_fixed_costs,
+        route_cost_bps=route_cost_bps,
         include_filtered=False,
     )
     return [
@@ -118,6 +122,8 @@ def scan_depth_candidates(
     allow_partial: bool = False,
     fee_bps: float = 0.0,
     min_profit: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
     include_filtered: bool = False,
 ) -> list[DepthCandidate]:
     detected_at = datetime.now(tz=timezone.utc)
@@ -142,6 +148,8 @@ def scan_depth_candidates(
                         allow_partial,
                         fee_bps,
                         min_profit,
+                        route_fixed_costs or {},
+                        route_cost_bps or {},
                         include_filtered,
                         detected_at,
                         book_cache,
@@ -160,6 +168,8 @@ def sweep_depth(
     min_match_score: float = 0.25,
     fee_bps: float = 0.0,
     min_profit: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
 ) -> list[DepthSweepRow]:
     rows = []
     book_cache: dict[tuple[str, str, str], OrderBook | None] = {}
@@ -174,6 +184,8 @@ def sweep_depth(
             allow_partial=False,
             fee_bps=fee_bps,
             min_profit=min_profit,
+            route_fixed_costs=route_fixed_costs,
+            route_cost_bps=route_cost_bps,
             include_filtered=False,
             book_cache=book_cache,
         )
@@ -201,6 +213,8 @@ def _scan_depth_candidates_with_cache(
     allow_partial: bool,
     fee_bps: float,
     min_profit: float,
+    route_fixed_costs: dict[str, float] | None,
+    route_cost_bps: dict[str, float] | None,
     include_filtered: bool,
     book_cache: dict[tuple[str, str, str], OrderBook | None],
 ) -> list[DepthCandidate]:
@@ -224,6 +238,8 @@ def _scan_depth_candidates_with_cache(
                         allow_partial,
                         fee_bps,
                         min_profit,
+                        route_fixed_costs or {},
+                        route_cost_bps or {},
                         include_filtered,
                         detected_at,
                         book_cache,
@@ -244,6 +260,8 @@ def find_max_depth_size(
     min_match_score: float = 0.25,
     fee_bps: float = 0.0,
     min_profit: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
 ) -> DepthMaxResult:
     sizes = _geometric_sizes(min_size, max_size, step_multiplier)
     checked = sweep_depth(
@@ -255,6 +273,8 @@ def find_max_depth_size(
         min_match_score=min_match_score,
         fee_bps=fee_bps,
         min_profit=min_profit,
+        route_fixed_costs=route_fixed_costs,
+        route_cost_bps=route_cost_bps,
     )
     passing = [row for row in checked if row.opportunities]
     best_row = passing[-1] if passing else None
@@ -280,6 +300,8 @@ def _pair_depth_opportunities(
     allow_partial: bool,
     fee_bps: float,
     min_profit: float,
+    route_fixed_costs: dict[str, float],
+    route_cost_bps: dict[str, float],
     include_filtered: bool,
     detected_at: datetime,
     book_cache: dict[tuple[str, str, str], OrderBook | None],
@@ -317,6 +339,9 @@ def _pair_depth_opportunities(
                 buy_quote.avg_price,
                 sell_quote.avg_price,
                 fee_bps,
+                executable_size,
+                route_fixed_costs,
+                route_cost_bps,
             )
             net_edge = depth_edge - safety_buffer - fee_estimate
             if net_edge < min_net_edge:
@@ -364,6 +389,9 @@ def _fee_estimate_per_share(
     buy_avg: float,
     sell_avg: float,
     manual_fee_bps: float,
+    executable_size: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
 ) -> tuple[float, list[str]]:
     buy_fee, buy_notes = _market_taker_fee_per_share(buy_market, buy_avg)
     sell_fee, sell_notes = _market_taker_fee_per_share(sell_market, sell_avg)
@@ -373,7 +401,46 @@ def _fee_estimate_per_share(
         notes.append(f"manual_fee_bps={manual_fee_bps}")
     elif any("unknown" in note or "no_fee_field" in note or "manual_fee_bps" in note for note in notes):
         notes.append("manual_fee_buffer_missing")
-    return buy_fee + sell_fee + manual_fee, notes
+    route_fee, route_notes = _route_operational_cost_per_share(
+        buy_market,
+        sell_market,
+        buy_avg,
+        sell_avg,
+        executable_size,
+        route_fixed_costs or {},
+        route_cost_bps or {},
+    )
+    return buy_fee + sell_fee + manual_fee + route_fee, notes + route_notes
+
+
+def _route_operational_cost_per_share(
+    buy_market: Market,
+    sell_market: Market,
+    buy_avg: float,
+    sell_avg: float,
+    executable_size: float,
+    route_fixed_costs: dict[str, float],
+    route_cost_bps: dict[str, float],
+) -> tuple[float, list[str]]:
+    route = f"{buy_market.source}->{sell_market.source}"
+    notes = []
+    fixed = _route_cost(route_fixed_costs, route)
+    bps = _route_cost(route_cost_bps, route)
+    fee = 0.0
+    if fixed > 0:
+        if executable_size > 0:
+            fee += fixed / executable_size
+            notes.append(f"route_fixed_cost_usdc={route}:{fixed}")
+        else:
+            notes.append(f"route_fixed_cost_unallocated={route}:{fixed}")
+    if bps > 0:
+        fee += (buy_avg + sell_avg) * (bps / 10_000.0)
+        notes.append(f"route_cost_bps={route}:{bps}")
+    return fee, notes
+
+
+def _route_cost(costs: dict[str, float], route: str) -> float:
+    return float(costs.get(route, costs.get("*", 0.0)) or 0.0)
 
 
 def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, list[str]]:

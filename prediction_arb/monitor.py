@@ -17,6 +17,8 @@ def monitor_once(
     min_match_score: float = 0.25,
     fee_bps: float = 0.0,
     min_profit: float = 0.0,
+    route_fixed_costs: dict[str, float] | None = None,
+    route_cost_bps: dict[str, float] | None = None,
 ) -> tuple[MonitorSnapshot, set[str]]:
     opportunities = scan_depth_candidates(
         limitless_markets=limitless_markets,
@@ -28,6 +30,8 @@ def monitor_once(
         allow_partial=False,
         fee_bps=fee_bps,
         min_profit=min_profit,
+        route_fixed_costs=route_fixed_costs,
+        route_cost_bps=route_cost_bps,
         include_filtered=False,
     )
     active_keys = {_opportunity_key(item) for item in opportunities}

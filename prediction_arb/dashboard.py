@@ -393,7 +393,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <div><strong>Polymarket:</strong> комиссия округляется до 5 знаков, как в публичной документации. В расчете мы считаем taker-вход: покупка и продажа съедают стакан.</div>
           <div><strong>Limitless:</strong> если есть creatorFeePct, он учитывается. Если точная кривая комиссии не пришла из API, используется ручной запас <strong>fee-bps</strong>, а сделка получает повышенный risk score.</div>
           <div><strong>fee-bps 50</strong> в текущем мониторе означает 0.50%, не 50%. Например, при ценах 0.40 и 0.45 ручной запас равен (0.40 + 0.45) * 0.005 = 0.00425 на share.</div>
-          <div>Не учитываются: gas, bridge/withdrawal, задержка перевода капитала между площадками и цена предварительного получения sell-shares.</div>
+          <div><strong>Operational costs:</strong> bridge, withdrawal, gas и перевод капитала задаются как fixed USDC на маршрут и/или bps на оборот. Fixed cost делится на размер сделки, поэтому маленькие сделки автоматически получают больший штраф.</div>
+          <div>Не подтягиваются автоматически: live gas, live bridge quotes, задержка перевода капитала и цена предварительного получения sell-shares. Сейчас это задается консервативными ручными параметрами.</div>
         </div>
       </div>
       <div class="metrics">
@@ -795,6 +796,16 @@ _DASHBOARD_HTML = r"""<!doctype html>
       if (value === "limitless_no_fee_field") return "Limitless: fee не найден";
       if (value === "manual_fee_buffer_missing") return "ручной запас не задан";
       if (value.startsWith("manual_fee_bps=")) return `ручной bps=${value.split("=")[1]}`;
+      if (value.startsWith("route_fixed_cost_usdc=")) {
+        const [, data] = value.split("=");
+        const [route, amount] = data.split(":");
+        return `операц. fixed ${route}: $${amount}`;
+      }
+      if (value.startsWith("route_cost_bps=")) {
+        const [, data] = value.split("=");
+        const [route, amount] = data.split(":");
+        return `операц. bps ${route}: ${amount}`;
+      }
       if (value.startsWith("polymarket_fee_rate=")) return `Polymarket rate=${value.split("=")[1]}`;
       if (value.startsWith("polymarket_fee_exponent=")) return `exp=${value.split("=")[1]}`;
       if (value.startsWith("limitless_creator_fee_pct=")) return `Limitless creator=${value.split("=")[1]}%`;

@@ -77,6 +77,8 @@ def main() -> None:
     depth_parser.add_argument("--min-profit", type=float, default=0.0)
     depth_parser.add_argument("--safety-buffer", type=float, default=0.002)
     depth_parser.add_argument("--fee-bps", type=float, default=0.0)
+    depth_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC costs per route, e.g. 'polymarket->limitless=2,*=1'.")
+    depth_parser.add_argument("--route-cost-bps", default="", help="Route operational bps on buy+sell notional, e.g. '*=25'.")
     depth_parser.add_argument("--min-match-score", type=float, default=0.25)
     depth_parser.add_argument("--allow-partial", action="store_true")
     depth_parser.add_argument("--include-filtered", action="store_true")
@@ -92,6 +94,8 @@ def main() -> None:
     near_parser.add_argument("--min-profit", type=float, default=0.0)
     near_parser.add_argument("--safety-buffer", type=float, default=0.002)
     near_parser.add_argument("--fee-bps", type=float, default=0.0)
+    near_parser.add_argument("--route-fixed-cost", default="")
+    near_parser.add_argument("--route-cost-bps", default="")
     near_parser.add_argument("--min-match-score", type=float, default=0.25)
     near_parser.add_argument("--min-close-minutes", type=float)
     near_parser.add_argument("--max-close-hours", type=float)
@@ -105,6 +109,8 @@ def main() -> None:
     sweep_parser.add_argument("--min-net-edge", type=float, default=0.005)
     sweep_parser.add_argument("--safety-buffer", type=float, default=0.002)
     sweep_parser.add_argument("--fee-bps", type=float, default=0.0)
+    sweep_parser.add_argument("--route-fixed-cost", default="")
+    sweep_parser.add_argument("--route-cost-bps", default="")
     sweep_parser.add_argument("--min-match-score", type=float, default=0.25)
     sweep_parser.add_argument("--output", type=Path)
 
@@ -117,6 +123,8 @@ def main() -> None:
     max_parser.add_argument("--min-net-edge", type=float, default=0.005)
     max_parser.add_argument("--safety-buffer", type=float, default=0.002)
     max_parser.add_argument("--fee-bps", type=float, default=0.0)
+    max_parser.add_argument("--route-fixed-cost", default="")
+    max_parser.add_argument("--route-cost-bps", default="")
     max_parser.add_argument("--min-match-score", type=float, default=0.25)
     max_parser.add_argument("--output", type=Path)
 
@@ -138,6 +146,8 @@ def main() -> None:
     monitor_parser.add_argument("--min-profit", type=float, default=0.0)
     monitor_parser.add_argument("--safety-buffer", type=float, default=0.002)
     monitor_parser.add_argument("--fee-bps", type=float, default=0.0)
+    monitor_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC operational costs per route, divided by executable size.")
+    monitor_parser.add_argument("--route-cost-bps", default="", help="Operational bps per route on buy+sell notional.")
     monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
     monitor_parser.add_argument("--min-close-minutes", type=float)
     monitor_parser.add_argument("--max-close-hours", type=float)
@@ -391,6 +401,8 @@ def _depth_scan(args: argparse.Namespace) -> None:
         allow_partial=args.allow_partial,
         fee_bps=args.fee_bps,
         min_profit=getattr(args, "min_profit", 0.0),
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
         include_filtered=args.include_filtered,
     )
     payload = [_serializable(asdict(item)) for item in rows]
@@ -411,6 +423,8 @@ def _near_misses(args: argparse.Namespace) -> None:
         allow_partial=False,
         fee_bps=args.fee_bps,
         min_profit=args.min_profit,
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
         include_filtered=True,
     )
     rejected = [row for row in rows if row.rejection_reason]
@@ -430,6 +444,8 @@ def _depth_sweep(args: argparse.Namespace) -> None:
         safety_buffer=args.safety_buffer,
         min_match_score=args.min_match_score,
         fee_bps=args.fee_bps,
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
     )
     payload = [_serializable(asdict(item)) for item in rows]
     _write_or_print(payload, args.output)
@@ -449,6 +465,8 @@ def _depth_max(args: argparse.Namespace) -> None:
         safety_buffer=args.safety_buffer,
         min_match_score=args.min_match_score,
         fee_bps=args.fee_bps,
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
     )
     _write_or_print([_serializable(asdict(result))], args.output)
 
@@ -495,6 +513,8 @@ def _monitor(args: argparse.Namespace) -> None:
                     min_match_score=args.min_match_score,
                     fee_bps=args.fee_bps,
                     min_profit=args.min_profit,
+                    route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+                    route_cost_bps=_parse_cost_map(args.route_cost_bps),
                 )
                 payload = _serializable(asdict(snapshot))
                 _append_jsonl(payload, args.output)
@@ -967,6 +987,19 @@ def _parse_sizes(value: str) -> list[float]:
             continue
         sizes.append(float(item))
     return sizes
+
+
+def _parse_cost_map(value: str) -> dict[str, float]:
+    costs: dict[str, float] = {}
+    if not value:
+        return costs
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        key, amount = item.rsplit("=", 1)
+        costs[key.strip()] = float(amount)
+    return costs
 
 
 def _serializable(value: object) -> object:
