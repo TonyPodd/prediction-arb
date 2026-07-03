@@ -12,7 +12,7 @@ from prediction_arb.portfolio import load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
-from prediction_arb.sources import limitless, polymarket
+from prediction_arb.sources import kalshi, polymarket
 
 
 def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | None = None, poll_interval: float = 2.0) -> None:
@@ -52,7 +52,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "/report [file] - лучшие активные маршруты\n"
             "/review - сделки для ручной проверки\n"
             "/review_report - качество ручной разметки\n"
-            "/capital [limitless_cash] [polymarket_cash] [file] - план капитала\n"
+            "/capital [kalshi_cash] [polymarket_cash] [file] - план капитала\n"
             "/coverage [limit] [hours] [category] - покрытие источников\n"
             "/portfolio - бумажный портфель\n"
             "/paper_enter [file] [max] - бумажный вход\n"
@@ -92,12 +92,12 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
     if command == "/review_report":
         return _format_review_report()
     if command == "/capital":
-        limitless_cash = _float(parts[1]) if len(parts) > 1 else 250.0
+        kalshi_cash = _float(parts[1]) if len(parts) > 1 else 250.0
         polymarket_cash = _float(parts[2]) if len(parts) > 2 else 250.0
         path = _file_from_name(parts[3]) if len(parts) > 3 else monitor_file
         plan = plan_capital(
             latest_opportunities(path),
-            {"limitless": limitless_cash, "polymarket": polymarket_cash},
+            {"kalshi": kalshi_cash, "polymarket": polymarket_cash},
             assume_sell_inventory=True,
         )
         lines = [
@@ -105,7 +105,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"файл: {path}",
             f"выбрано={plan['allocated_count']} отклонено={plan['rejected_count']}",
             f"кэш на покупку=${plan['total_buy_cash_required']:.2f} оценка прибыли=${plan['total_estimated_profit']:.2f}",
-            f"остаток limitless=${plan['cash_remaining'].get('limitless', 0):.2f} polymarket=${plan['cash_remaining'].get('polymarket', 0):.2f}",
+            f"остаток kalshi=${plan['cash_remaining'].get('kalshi', 0):.2f} polymarket=${plan['cash_remaining'].get('polymarket', 0):.2f}",
         ]
         for item in plan["allocated"][:5]:
             lines.append(f"- {item['outcome']} {item['route']} cash=${item['buy_cash_required']:.2f} profit=${item['estimated_profit']:.2f}")
@@ -114,7 +114,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         limit = int(_float(parts[1])) if len(parts) > 1 and _float(parts[1]) > 0 else 1000
         max_hours = _float(parts[2]) if len(parts) > 2 and _float(parts[2]) > 0 else 24.0
         category = parts[3] if len(parts) > 3 else ""
-        limitless_markets = limitless.fetch_markets(limit=limit)
+        limitless_markets = kalshi.fetch_markets(limit=limit)
         polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
         if category:
             limitless_markets = _filter_by_category(limitless_markets, category)
@@ -127,7 +127,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         summary = portfolio_summary(load_portfolio(Path("data/portfolio.json")))
         return (
             "Бумажный портфель\n"
-            f"кэш limitless=${summary['cash'].get('limitless', 0):.2f} polymarket=${summary['cash'].get('polymarket', 0):.2f}\n"
+            f"кэш kalshi=${summary['cash'].get('kalshi', 0):.2f} polymarket=${summary['cash'].get('polymarket', 0):.2f}\n"
             f"открыто={summary['open_count']} закрыто={summary['closed_count']} отклонено={summary['rejected_count']}\n"
             f"открытый notional=${summary['open_notional']:.2f} прибыль входа=${summary['open_estimated_profit']:.2f} текущая прибыль=${summary['current_estimated_profit']:.2f}\n"
             f"realized pnl=${summary['realized_pnl']:.2f}"
@@ -140,7 +140,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "Бумажный вход\n"
             f"файл: {path}\n"
             f"вошли={result['entered_count']}\n"
-            f"открыто={result['portfolio']['open_count']} cash_limitless=${result['portfolio']['cash'].get('limitless', 0):.2f} "
+            f"открыто={result['portfolio']['open_count']} cash_kalshi=${result['portfolio']['cash'].get('kalshi', 0):.2f} "
             f"cash_polymarket=${result['portfolio']['cash'].get('polymarket', 0):.2f}"
         )
     if command == "/paper_sync":
@@ -294,7 +294,7 @@ def _format_coverage(coverage: dict[str, object], *, limit: int, max_hours: floa
         "Покрытие источников",
         f"limit={limit} max_hours={max_hours:g}" + (f" category={category}" if category else ""),
     ]
-    for name in ("limitless", "polymarket"):
+    for name in ("kalshi", "polymarket"):
         source = sources.get(name, {}) if isinstance(sources, dict) else {}
         lines.append(
             f"{name}: markets={source.get('count', 0)} short24h={source.get('short_term_24h_count', 0)} "

@@ -106,8 +106,8 @@ def _pair_stats(limitless_markets: list[Market], polymarket_markets: list[Market
                     {
                         "score": details.score,
                         "warnings": details.warnings,
-                        "limitless": {"market_id": left.market_id, "title": left.title, "url": left.url},
-                        "polymarket": {"market_id": right.market_id, "title": right.title, "url": right.url},
+                        left.source: {"market_id": left.market_id, "title": left.title, "url": left.url},
+                        right.source: {"market_id": right.market_id, "title": right.title, "url": right.url},
                     }
                 )
     return {

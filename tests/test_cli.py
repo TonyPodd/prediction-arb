@@ -97,20 +97,20 @@ class CliTests(unittest.TestCase):
         self.assertGreater(_near_miss_sort_key(strong), _near_miss_sort_key(weak))
 
     def test_fetch_monitor_universe_combines_all_markets_and_queries(self) -> None:
-        all_limitless = [Market("limitless", "all", "All", None, None, None, None, TopOfBook(), {})]
-        query_limitless = [Market("limitless", "query", "Query", None, None, None, None, TopOfBook(), {})]
+        all_kalshi = [Market("kalshi", "all", "All", None, None, None, None, TopOfBook(), {})]
+        query_kalshi = [Market("kalshi", "query", "Query", None, None, None, None, TopOfBook(), {})]
         all_poly = [Market("polymarket", "all", "All", None, None, None, None, TopOfBook(), {})]
         query_poly = [Market("polymarket", "query", "Query", None, None, None, None, TopOfBook(), {})]
         args = Namespace(query=["btc"], category=[], all_markets=True, limit=10, min_close_minutes=None, max_close_hours=None)
 
-        with patch("prediction_arb.cli.limitless.fetch_markets", return_value=all_limitless), patch(
+        with patch("prediction_arb.cli.kalshi.fetch_markets", return_value=all_kalshi), patch(
             "prediction_arb.cli.polymarket.fetch_markets_expanded", return_value=all_poly
-        ), patch("prediction_arb.cli._fetch_limitless", return_value=query_limitless), patch(
+        ), patch("prediction_arb.cli._fetch_kalshi", return_value=query_kalshi), patch(
             "prediction_arb.cli._fetch_polymarket", return_value=query_poly
         ):
-            limitless_rows, polymarket_rows = _fetch_monitor_universe(args)
+            kalshi_rows, polymarket_rows = _fetch_monitor_universe(args)
 
-        self.assertEqual([row.market_id for row in limitless_rows], ["all", "query"])
+        self.assertEqual([row.market_id for row in kalshi_rows], ["all", "query"])
         self.assertEqual([row.market_id for row in polymarket_rows], ["all", "query"])
 
 

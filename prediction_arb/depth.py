@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from prediction_arb.matching import MatchDetails, market_match_details
 from prediction_arb.models import DepthCandidate, DepthMaxResult, DepthOpportunity, DepthSweepRow, ExecutionQuote, Market, OrderBook, OrderLevel
 from prediction_arb.scanner import _has_structural_mismatch
-from prediction_arb.sources import limitless, polymarket
+from prediction_arb.sources import kalshi, limitless, polymarket
 
 
 def quote_execution(
@@ -125,36 +125,34 @@ def scan_depth_candidates(
     route_fixed_costs: dict[str, float] | None = None,
     route_cost_bps: dict[str, float] | None = None,
     include_filtered: bool = False,
+    max_depth_pairs: int = 0,
 ) -> list[DepthCandidate]:
     detected_at = datetime.now(tz=timezone.utc)
     rows: list[DepthCandidate] = []
     book_cache: dict[tuple[str, str, str], OrderBook | None] = {}
 
-    for left in limitless_markets:
-        for right in polymarket_markets:
-            details = market_match_details(left, right)
-            if details.score < min_match_score or _has_structural_mismatch(details):
-                continue
-            for outcome in ("YES", "NO"):
-                rows.extend(
-                    _pair_depth_opportunities(
-                        left,
-                        right,
-                        details,
-                        outcome,
-                        size,
-                        min_net_edge,
-                        safety_buffer,
-                        allow_partial,
-                        fee_bps,
-                        min_profit,
-                        route_fixed_costs or {},
-                        route_cost_bps or {},
-                        include_filtered,
-                        detected_at,
-                        book_cache,
-                    )
+    pairs = _matching_pairs(limitless_markets, polymarket_markets, min_match_score=min_match_score, max_depth_pairs=max_depth_pairs)
+    for left, right, details in pairs:
+        for outcome in ("YES", "NO"):
+            rows.extend(
+                _pair_depth_opportunities(
+                    left,
+                    right,
+                    details,
+                    outcome,
+                    size,
+                    min_net_edge,
+                    safety_buffer,
+                    allow_partial,
+                    fee_bps,
+                    min_profit,
+                    route_fixed_costs or {},
+                    route_cost_bps or {},
+                    include_filtered,
+                    detected_at,
+                    book_cache,
                 )
+            )
 
     return sorted(rows, key=lambda item: item.net_edge if item.net_edge is not None else -999.0, reverse=True)
 
@@ -217,34 +215,32 @@ def _scan_depth_candidates_with_cache(
     route_cost_bps: dict[str, float] | None,
     include_filtered: bool,
     book_cache: dict[tuple[str, str, str], OrderBook | None],
+    max_depth_pairs: int = 0,
 ) -> list[DepthCandidate]:
     detected_at = datetime.now(tz=timezone.utc)
     rows: list[DepthCandidate] = []
-    for left in limitless_markets:
-        for right in polymarket_markets:
-            details = market_match_details(left, right)
-            if details.score < min_match_score or _has_structural_mismatch(details):
-                continue
-            for outcome in ("YES", "NO"):
-                rows.extend(
-                    _pair_depth_opportunities(
-                        left,
-                        right,
-                        details,
-                        outcome,
-                        size,
-                        min_net_edge,
-                        safety_buffer,
-                        allow_partial,
-                        fee_bps,
-                        min_profit,
-                        route_fixed_costs or {},
-                        route_cost_bps or {},
-                        include_filtered,
-                        detected_at,
-                        book_cache,
-                    )
+    pairs = _matching_pairs(limitless_markets, polymarket_markets, min_match_score=min_match_score, max_depth_pairs=max_depth_pairs)
+    for left, right, details in pairs:
+        for outcome in ("YES", "NO"):
+            rows.extend(
+                _pair_depth_opportunities(
+                    left,
+                    right,
+                    details,
+                    outcome,
+                    size,
+                    min_net_edge,
+                    safety_buffer,
+                    allow_partial,
+                    fee_bps,
+                    min_profit,
+                    route_fixed_costs or {},
+                    route_cost_bps or {},
+                    include_filtered,
+                    detected_at,
+                    book_cache,
                 )
+            )
     return sorted(rows, key=lambda item: item.net_edge if item.net_edge is not None else -999.0, reverse=True)
 
 
@@ -383,6 +379,24 @@ def _pair_depth_opportunities(
     return rows
 
 
+def _matching_pairs(
+    left_markets: list[Market],
+    right_markets: list[Market],
+    *,
+    min_match_score: float,
+    max_depth_pairs: int = 0,
+) -> list[tuple[Market, Market, MatchDetails]]:
+    pairs: list[tuple[Market, Market, MatchDetails]] = []
+    for left in left_markets:
+        for right in right_markets:
+            details = market_match_details(left, right)
+            if details.score < min_match_score or _has_structural_mismatch(details):
+                continue
+            pairs.append((left, right, details))
+    pairs.sort(key=lambda item: (item[2].score, len(item[2].shared_tokens)), reverse=True)
+    return pairs[:max_depth_pairs] if max_depth_pairs > 0 else pairs
+
+
 def _fee_estimate_per_share(
     buy_market: Market,
     sell_market: Market,
@@ -464,6 +478,9 @@ def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, li
             return 0.0, ["limitless_fee_curve_unknown_use_manual_fee_bps"]
         return 0.0, ["limitless_no_fee_field"]
 
+    if market.source == "kalshi":
+        return 0.0, ["kalshi_fee_model_not_implemented_use_manual_fee_bps"]
+
     return 0.0, [f"{market.source}_fee_unknown"]
 
 
@@ -506,6 +523,8 @@ def _float(value: object) -> float | None:
 
 
 def _fetch_book(market: Market, outcome: str) -> OrderBook | None:
+    if market.source == "kalshi":
+        return kalshi.fetch_orderbook(market, outcome)
     if market.source == "limitless":
         return limitless.fetch_orderbook(market, outcome)
     if market.source == "polymarket":

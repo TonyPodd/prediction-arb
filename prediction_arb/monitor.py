@@ -19,6 +19,7 @@ def monitor_once(
     min_profit: float = 0.0,
     route_fixed_costs: dict[str, float] | None = None,
     route_cost_bps: dict[str, float] | None = None,
+    max_depth_pairs: int = 0,
 ) -> tuple[MonitorSnapshot, set[str]]:
     opportunities = scan_depth_candidates(
         limitless_markets=limitless_markets,
@@ -33,6 +34,7 @@ def monitor_once(
         route_fixed_costs=route_fixed_costs,
         route_cost_bps=route_cost_bps,
         include_filtered=False,
+        max_depth_pairs=max_depth_pairs,
     )
     active_keys = {_opportunity_key(item) for item in opportunities}
     new_keys = sorted(active_keys - previous_keys)

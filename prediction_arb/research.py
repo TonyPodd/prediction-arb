@@ -12,7 +12,7 @@ from prediction_arb.near import append_near_opportunities, select_near_opportuni
 from prediction_arb.scanner import _has_structural_mismatch
 
 
-DEFAULT_RESEARCH_FILE = Path("data/research-monitor.jsonl")
+DEFAULT_RESEARCH_FILE = Path("data/research-kalshi-poly.jsonl")
 
 
 def build_research_snapshot(
@@ -73,10 +73,7 @@ def build_research_snapshot(
             "top": top,
             "max_depth_pairs": max_depth_pairs,
         },
-        "source_counts": {
-            "limitless": len(limitless_markets),
-            "polymarket": len(polymarket_markets),
-        },
+        "source_counts": _source_counts(limitless_markets, polymarket_markets),
         "matching": matching_summary(limitless_markets, polymarket_markets, min_match_score=min_match_score),
         "depth_pairs_scanned": len(pairs),
         "candidate_count": len(rows),
@@ -117,6 +114,13 @@ def matching_summary(
         "structurally_compatible_pairs": compatible,
         "warning_counts": dict(sorted(warning_counts.items())),
     }
+
+
+def _source_counts(left_markets: list[Market], right_markets: list[Market]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for market in [*left_markets, *right_markets]:
+        counts[market.source] = counts.get(market.source, 0) + 1
+    return counts
 
 
 def selected_matching_pairs(

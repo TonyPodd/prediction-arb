@@ -18,10 +18,23 @@ def summarize_source_coverage(
     reference_time = now or datetime.now(tz=timezone.utc)
     return {
         "generated_at": reference_time.isoformat(),
-        "sources": {
-            "limitless": summarize_markets(limitless_markets, now=reference_time, example_limit=example_limit),
-            "polymarket": summarize_markets(polymarket_markets, now=reference_time, example_limit=example_limit),
-        },
+        "sources": _source_summaries(limitless_markets, polymarket_markets, now=reference_time, example_limit=example_limit),
+    }
+
+
+def _source_summaries(
+    left_markets: list[Market],
+    right_markets: list[Market],
+    *,
+    now: datetime,
+    example_limit: int,
+) -> dict[str, object]:
+    rows: dict[str, list[Market]] = {}
+    for market in [*left_markets, *right_markets]:
+        rows.setdefault(market.source, []).append(market)
+    return {
+        source: summarize_markets(markets, now=now, example_limit=example_limit)
+        for source, markets in rows.items()
     }
 
 

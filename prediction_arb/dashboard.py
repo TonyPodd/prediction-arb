@@ -15,10 +15,10 @@ from prediction_arb.reporting import latest_opportunities, read_monitor_history,
 from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
 from prediction_arb.risk import assess_candidate_risk, candidate_to_dict
-from prediction_arb.sources import limitless, polymarket
+from prediction_arb.sources import kalshi, polymarket
 
 
-DEFAULT_MONITOR_FILE = Path("data/monitor-short-all.jsonl")
+DEFAULT_MONITOR_FILE = Path("data/monitor-kalshi-poly.jsonl")
 
 
 def serve_dashboard(host: str, port: int, default_input: Path = DEFAULT_MONITOR_FILE) -> None:
@@ -53,14 +53,14 @@ def _handler(default_input: Path):
                     return
                 if parsed.path == "/api/research":
                     query = parse_qs(parsed.query)
-                    path = _safe_monitor_path(query.get("input", ["data/research-monitor.jsonl"])[0])
+                    path = _safe_monitor_path(query.get("input", ["data/research-kalshi-poly.jsonl"])[0])
                     limit = _int(query.get("limit", ["50"])[0], default=50)
                     self._send_json(_read_jsonl(path)[-limit:])
                     return
                 if parsed.path == "/api/capital":
                     query = parse_qs(parsed.query)
                     path = _safe_monitor_path(query.get("input", [str(default_input)])[0])
-                    cash = parse_balances(query.get("cash", ["limitless=250,polymarket=250"])[0])
+                    cash = parse_balances(query.get("cash", ["kalshi=250,polymarket=250"])[0])
                     inventory = parse_inventory(query.get("inventory", [""])[0])
                     assume = _bool(query.get("assume_sell_inventory", ["true"])[0])
                     limit = _int(query.get("limit", ["10"])[0], default=10)
@@ -76,7 +76,7 @@ def _handler(default_input: Path):
                     limit = _int(query.get("limit", ["100"])[0], default=100)
                     category = query.get("category", [""])[0]
                     max_close_hours = _float(query.get("max_close_hours", [""])[0])
-                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    limitless_markets = kalshi.fetch_markets(limit=limit)
                     polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
@@ -95,7 +95,7 @@ def _handler(default_input: Path):
                     fee_bps = _float(query.get("fee_bps", ["50"])[0]) or 50.0
                     route_fixed_costs = _parse_cost_map(query.get("route_fixed_cost", ["*=2"])[0])
                     route_cost_bps = _parse_cost_map(query.get("route_cost_bps", ["*=25"])[0])
-                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    limitless_markets = kalshi.fetch_markets(limit=limit)
                     polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
@@ -140,7 +140,7 @@ def _handler(default_input: Path):
                     fee_bps = _float(query.get("fee_bps", ["10"])[0]) or 0.0
                     max_close_hours = _float(query.get("max_close_hours", ["24"])[0])
                     category = query.get("category", ["crypto"])[0]
-                    limitless_markets = limitless.fetch_markets(limit=limit)
+                    limitless_markets = kalshi.fetch_markets(limit=limit)
                     polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
@@ -447,7 +447,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <div class="panel">
         <h2>Планировщик капитала</h2>
         <div class="planner">
-          <label><div class="label">USDC на Limitless</div><input id="limitlessCash" type="number" value="250" min="0" step="10"></label>
+          <label><div class="label">USDC на Kalshi</div><input id="kalshiCash" type="number" value="250" min="0" step="10"></label>
           <label><div class="label">USDC на Polymarket</div><input id="polymarketCash" type="number" value="250" min="0" step="10"></label>
           <label><div class="label">Макс. позиций</div><input id="allocationLimit" type="number" value="10" min="1" step="1"></label>
           <label class="switch"><input id="assumeInventory" type="checkbox" checked> теоретический режим: не проверять sell-shares</label>
@@ -466,7 +466,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <div class="formula">estimated profit = net edge * executable size</div>
           <div><strong>Polymarket:</strong> если API говорит feesEnabled=false, комиссия считается 0. Иначе используется feeSchedule: rate * price * (1 - price). Если feeSchedule нет, применяется fallback.</div>
           <div><strong>Polymarket:</strong> комиссия округляется до 5 знаков, как в публичной документации. В расчете мы считаем taker-вход: покупка и продажа съедают стакан.</div>
-          <div><strong>Limitless:</strong> если есть creatorFeePct, он учитывается. Если точная кривая комиссии не пришла из API, используется ручной запас <strong>fee-bps</strong>, а сделка получает повышенный risk score.</div>
+          <div><strong>Kalshi:</strong> публичные стаканы доступны без ключей, но точную комиссию исполнения мы пока считаем через ручной запас <strong>fee-bps</strong>. Это консервативный read-only режим.</div>
           <div><strong>fee-bps 50</strong> в текущем мониторе означает 0.50%, не 50%. Например, при ценах 0.40 и 0.45 ручной запас равен (0.40 + 0.45) * 0.005 = 0.00425 на share.</div>
           <div><strong>Operational costs:</strong> bridge, withdrawal, gas и перевод капитала задаются как fixed USDC на маршрут и/или bps на оборот. Fixed cost делится на размер сделки, поэтому маленькие сделки автоматически получают больший штраф.</div>
           <div>Не подтягиваются автоматически: live gas, live bridge quotes, задержка перевода капитала и цена предварительного получения sell-shares. Сейчас это задается консервативными ручными параметрами.</div>
@@ -477,7 +477,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <div class="metric"><div class="label">Отклонено</div><div class="value" id="planRejected">0</div></div>
         <div class="metric"><div class="label">Кэш на покупки</div><div class="value" id="planCashUsed">$0</div></div>
         <div class="metric"><div class="label">Оценка прибыли</div><div class="value ok" id="planProfit">$0</div></div>
-        <div class="metric"><div class="label">Остаток Limitless</div><div class="value" id="limitlessLeft">$0</div></div>
+        <div class="metric"><div class="label">Остаток Kalshi</div><div class="value" id="kalshiLeft">$0</div></div>
         <div class="metric"><div class="label">Остаток Polymarket</div><div class="value" id="polymarketLeft">$0</div></div>
       </div>
       <div class="panel">
@@ -550,7 +550,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <div class="metric"><div class="label">Прибыль на входе</div><div class="value ok" id="portfolioProfit">$0</div></div>
         <div class="metric"><div class="label">Текущая прибыль</div><div class="value ok" id="portfolioCurrentProfit">$0</div></div>
         <div class="metric"><div class="label">Realized PnL</div><div class="value" id="portfolioPnl">$0</div></div>
-        <div class="metric"><div class="label">Кэш Limitless</div><div class="value" id="portfolioLimitless">$0</div></div>
+        <div class="metric"><div class="label">Кэш Kalshi</div><div class="value" id="portfolioKalshi">$0</div></div>
       </div>
       <div class="panel">
         <h2>Открытые бумажные позиции</h2>
@@ -569,7 +569,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         </div>
       </div>
       <div class="coverage-grid">
-        <div class="panel"><h2>Limitless</h2><div id="coverageLimitless"></div></div>
+        <div class="panel"><h2>Kalshi</h2><div id="coverageKalshi"></div></div>
         <div class="panel"><h2>Polymarket</h2><div id="coveragePolymarket"></div></div>
       </div>
     </section>
@@ -589,7 +589,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         </div>
       </div>
       <div class="metrics">
-        <div class="metric"><div class="label">Limitless рынков</div><div class="value" id="healthLimitless">0</div></div>
+        <div class="metric"><div class="label">Kalshi рынков</div><div class="value" id="healthKalshi">0</div></div>
         <div class="metric"><div class="label">Polymarket рынков</div><div class="value" id="healthPolymarket">0</div></div>
         <div class="metric"><div class="label">Пары проверены</div><div class="value" id="healthPairs">0</div></div>
         <div class="metric"><div class="label">Совместимые пары</div><div class="value" id="healthCompatible">0</div></div>
@@ -611,7 +611,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <div class="panel">
         <h2>Research monitor на 7 дней</h2>
         <div class="planner">
-          <label><div class="label">Файл research</div><input id="researchPath" value="data/research-monitor.jsonl"></label>
+          <label><div class="label">Файл research</div><input id="researchPath" value="data/research-kalshi-poly.jsonl"></label>
           <button class="primary" id="researchRefreshBtn">Обновить research</button>
         </div>
         <div class="explain">
@@ -640,7 +640,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, research: [], review: [], reviewReport: null, near: [] };
+    const state = { input: "data/monitor-kalshi-poly.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, research: [], review: [], reviewReport: null, near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -661,9 +661,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
         option.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
         el("fileSelect").appendChild(option);
       }
+      const kalshiPoly = files.find(file => file.path.includes("monitor-kalshi-poly.jsonl"));
       const shortAll = files.find(file => file.path.includes("monitor-short-all.jsonl"));
       const taiwan = files.find(file => file.path.includes("monitor-taiwan.jsonl"));
-      state.input = (shortAll || taiwan || files[0] || {}).path || state.input;
+      state.input = (kalshiPoly || shortAll || taiwan || files[0] || {}).path || state.input;
       el("fileSelect").value = state.input;
     }
 
@@ -682,7 +683,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     }
 
     async function refreshPlanner() {
-      const cash = `limitless=${Number(el("limitlessCash").value || 0)},polymarket=${Number(el("polymarketCash").value || 0)}`;
+      const cash = `kalshi=${Number(el("kalshiCash").value || 0)},polymarket=${Number(el("polymarketCash").value || 0)}`;
       const assume = el("assumeInventory").checked ? "true" : "false";
       const limit = Number(el("allocationLimit").value || 10);
       state.plan = await json(`/api/capital?input=${encodeURIComponent(state.input)}&cash=${encodeURIComponent(cash)}&assume_sell_inventory=${assume}&limit=${limit}`);
@@ -708,7 +709,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     }
 
     async function refreshResearch() {
-      const path = encodeURIComponent(el("researchPath").value || "data/research-monitor.jsonl");
+      const path = encodeURIComponent(el("researchPath").value || "data/research-kalshi-poly.jsonl");
       state.research = await json(`/api/research?input=${path}&limit=80`);
     }
 
@@ -794,7 +795,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("planRejected").textContent = plan.rejected_count || 0;
       el("planCashUsed").textContent = money(plan.total_buy_cash_required);
       el("planProfit").textContent = money(plan.total_estimated_profit);
-      el("limitlessLeft").textContent = money((plan.cash_remaining || {}).limitless);
+      el("kalshiLeft").textContent = money((plan.cash_remaining || {}).kalshi);
       el("polymarketLeft").textContent = money((plan.cash_remaining || {}).polymarket);
       el("allocationTable").innerHTML = (plan.allocated || []).map(row => `
         <tr><td><div class="route">${row.outcome} ${row.route}</div><div class="muted">${escapeHtml(row.buy_title || "")}</div></td>
@@ -812,7 +813,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("portfolioProfit").textContent = money(portfolio.open_estimated_profit);
       el("portfolioCurrentProfit").textContent = money(portfolio.current_estimated_profit);
       el("portfolioPnl").textContent = money(portfolio.realized_pnl);
-      el("portfolioLimitless").textContent = money(cash.limitless);
+      el("portfolioKalshi").textContent = money(cash.kalshi);
       el("portfolioTable").innerHTML = (portfolio.open_positions || []).map(row => `
         <tr><td><div class="route">${row.outcome || ""} ${row.route || ""}</div><div class="muted">${escapeHtml(row.buy_title || "")}</div><div class="muted">${row.key || ""}</div></td>
         <td class="num">${money(row.buy_cash_required)}</td><td class="num">${fmt.format(row.sell_inventory_required || 0)}<br><span class="muted">${row.sell_inventory_key || ""}</span></td>
@@ -821,7 +822,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
 
     function renderCoverage(coverage) {
       const sources = coverage.sources || {};
-      renderCoverageSource("coverageLimitless", sources.limitless || {});
+      renderCoverageSource("coverageKalshi", sources.kalshi || {});
       renderCoverageSource("coveragePolymarket", sources.polymarket || {});
     }
 
@@ -844,7 +845,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const sources = (health.coverage || {}).sources || {};
       const matching = health.matching || {};
       const scans = health.scans || {};
-      el("healthLimitless").textContent = (sources.limitless || {}).count || 0;
+      el("healthKalshi").textContent = (sources.kalshi || {}).count || 0;
       el("healthPolymarket").textContent = (sources.polymarket || {}).count || 0;
       el("healthPairs").textContent = matching.pairs_checked || 0;
       el("healthCompatible").textContent = matching.structurally_compatible_pairs || 0;
@@ -867,7 +868,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const nearRows = latest.near || [];
       const best = latest.best_near || nearRows[0] || {};
       el("researchSnapshots").textContent = snapshots.length;
-      el("researchMarkets").textContent = `${counts.limitless || 0} / ${counts.polymarket || 0}`;
+      el("researchMarkets").textContent = `${counts.kalshi || counts.limitless || 0} / ${counts.polymarket || 0}`;
       el("researchCompatible").textContent = matching.structurally_compatible_pairs || 0;
       el("researchCandidates").textContent = latest.candidate_count || 0;
       el("researchNear").textContent = latest.near_count || 0;
@@ -1015,6 +1016,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         fee_estimate_missing: "нет оценки комиссий",
         fee_model_uncertain: "комиссии оценены неуверенно",
         limitless_fee_curve_unknown: "неизвестная кривая комиссии Limitless",
+        kalshi_fee_model_not_implemented_use_manual_fee_bps: "Kalshi: комиссия через ручной запас",
         low_manual_fee_buffer: "низкий ручной запас комиссии",
         filtered_candidate: "кандидат был отфильтрован",
       };
@@ -1042,6 +1044,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       if (value === "polymarket_fee_rounded_5dp") return "Polymarket: округление 5 знаков";
       if (value === "limitless_fee_curve_unknown_use_manual_fee_bps") return "Limitless: ручной запас";
       if (value === "limitless_no_fee_field") return "Limitless: fee не найден";
+      if (value === "kalshi_fee_model_not_implemented_use_manual_fee_bps") return "Kalshi: ручной запас";
       if (value === "manual_fee_buffer_missing") return "ручной запас не задан";
       if (value.startsWith("manual_fee_bps=")) return `ручной bps=${value.split("=")[1]}`;
       if (value.startsWith("route_fixed_cost_usdc=")) {

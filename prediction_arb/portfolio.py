@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_PORTFOLIO = {
-    "cash": {"limitless": 250.0, "polymarket": 250.0},
+    "cash": {"kalshi": 250.0, "polymarket": 250.0},
     "inventory": {},
     "open_positions": [],
     "closed_positions": [],

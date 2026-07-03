@@ -48,11 +48,11 @@ class TelegramBotTests(unittest.TestCase):
                         "opportunity_count": 1,
                         "new_count": 1,
                         "gone_count": 0,
-                        "active_keys": ["YES|limitless|1|polymarket|2"],
+                        "active_keys": ["YES|kalshi|1|polymarket|2"],
                         "opportunities": [
                             {
                                 "outcome": "YES",
-                                "buy_source": "limitless",
+                                "buy_source": "kalshi",
                                 "buy_market_id": "1",
                                 "sell_source": "polymarket",
                                 "sell_market_id": "2",
@@ -85,16 +85,16 @@ class TelegramBotTests(unittest.TestCase):
 
     def test_handle_coverage_command(self) -> None:
         close_time = (datetime.now(tz=timezone.utc) + timedelta(hours=2)).isoformat()
-        limitless_market = Market("limitless", "l1", "BTC Up or Down - 15 Min", None, close_time, None, None, TopOfBook(), {})
+        kalshi_market = Market("kalshi", "k1", "Bitcoin Up or Down - 15 Min", None, close_time, None, None, TopOfBook(), {})
         polymarket_market = Market("polymarket", "p1", "Bitcoin Up or Down - 15 minutes", None, close_time, None, None, TopOfBook(), {})
 
-        with patch("prediction_arb.telegram_bot.limitless.fetch_markets", return_value=[limitless_market]), patch(
-            "prediction_arb.telegram_bot.polymarket.fetch_markets", return_value=[polymarket_market]
+        with patch("prediction_arb.telegram_bot.kalshi.fetch_markets", return_value=[kalshi_market]), patch(
+            "prediction_arb.telegram_bot.polymarket.fetch_markets_expanded", return_value=[polymarket_market]
         ):
             text = handle_bot_command("/coverage 10 24", Path("missing.jsonl"))
 
         self.assertIn("Покрытие источников", text or "")
-        self.assertIn("limitless: markets=1", text or "")
+        self.assertIn("kalshi: markets=1", text or "")
         self.assertIn("polymarket: markets=1", text or "")
 
     def test_start_command_has_buttons(self) -> None:

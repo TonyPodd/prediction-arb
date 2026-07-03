@@ -26,7 +26,7 @@ from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_candidates
 from prediction_arb.risk import assess_candidate_risk
 from prediction_arb.scanner import scan_opportunities
-from prediction_arb.sources import limitless, polymarket
+from prediction_arb.sources import kalshi, limitless, polymarket
 from prediction_arb.telegram_bot import run_telegram_bot
 
 
@@ -35,7 +35,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="prediction-arb")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan_parser = subparsers.add_parser("scan", help="Scan Limitless and Polymarket for potential gaps.")
+    scan_parser = subparsers.add_parser("scan", help="Scan Kalshi and Polymarket for potential gaps.")
     scan_parser.add_argument("--limit", type=int, default=100)
     scan_parser.add_argument("--min-edge", type=float, default=0.02)
     scan_parser.add_argument("--min-match-score", type=float, default=0.25)
@@ -44,7 +44,7 @@ def main() -> None:
     scan_parser.add_argument("--output", type=Path)
 
     markets_parser = subparsers.add_parser("markets", help="Dump normalized markets from one source.")
-    markets_parser.add_argument("--source", choices=["limitless", "polymarket"], required=True)
+    markets_parser.add_argument("--source", choices=["kalshi", "limitless", "polymarket"], required=True)
     markets_parser.add_argument("--limit", type=int, default=20)
     markets_parser.add_argument("--output", type=Path)
     markets_parser.add_argument("--include-raw", action="store_true")
@@ -98,7 +98,7 @@ def main() -> None:
     depth_parser.add_argument("--min-profit", type=float, default=0.0)
     depth_parser.add_argument("--safety-buffer", type=float, default=0.002)
     depth_parser.add_argument("--fee-bps", type=float, default=0.0)
-    depth_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC costs per route, e.g. 'polymarket->limitless=2,*=1'.")
+    depth_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC costs per route, e.g. 'polymarket->kalshi=2,*=1'.")
     depth_parser.add_argument("--route-cost-bps", default="", help="Route operational bps on buy+sell notional, e.g. '*=25'.")
     depth_parser.add_argument("--min-match-score", type=float, default=0.25)
     depth_parser.add_argument("--allow-partial", action="store_true")
@@ -191,6 +191,7 @@ def main() -> None:
     monitor_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC operational costs per route, divided by executable size.")
     monitor_parser.add_argument("--route-cost-bps", default="", help="Operational bps per route on buy+sell notional.")
     monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
+    monitor_parser.add_argument("--max-depth-pairs", type=int, default=40, help="Maximum structurally compatible pairs to fetch orderbooks for per iteration. 0 means no limit.")
     monitor_parser.add_argument("--min-close-minutes", type=float)
     monitor_parser.add_argument("--max-close-hours", type=float)
     monitor_parser.add_argument("--output", type=Path, default=Path("data/monitor.jsonl"))
@@ -245,7 +246,7 @@ def main() -> None:
 
     capital_parser = subparsers.add_parser("capital-plan", help="Plan capital allocation across latest monitor opportunities.")
     capital_parser.add_argument("--input", type=Path, required=True)
-    capital_parser.add_argument("--cash", default="limitless=250,polymarket=250")
+    capital_parser.add_argument("--cash", default="kalshi=250,polymarket=250")
     capital_parser.add_argument("--inventory", default="")
     capital_parser.add_argument("--require-sell-inventory", action="store_true")
     capital_parser.add_argument("--max-allocations", type=int, default=10)
@@ -253,7 +254,7 @@ def main() -> None:
 
     portfolio_init_parser = subparsers.add_parser("portfolio-init", help="Initialize local paper portfolio state.")
     portfolio_init_parser.add_argument("--portfolio", type=Path, default=Path("data/portfolio.json"))
-    portfolio_init_parser.add_argument("--cash", default="limitless=250,polymarket=250")
+    portfolio_init_parser.add_argument("--cash", default="kalshi=250,polymarket=250")
     portfolio_init_parser.add_argument("--overwrite", action="store_true")
     portfolio_init_parser.add_argument("--output", type=Path)
 
@@ -295,13 +296,13 @@ def main() -> None:
     telegram_bot_parser = subparsers.add_parser("telegram-bot", help="Run Telegram command bot for monitor status/report.")
     telegram_bot_parser.add_argument("--bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     telegram_bot_parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
-    telegram_bot_parser.add_argument("--input", type=Path, default=Path("data/monitor-short-all.jsonl"))
+    telegram_bot_parser.add_argument("--input", type=Path, default=Path("data/monitor-kalshi-poly.jsonl"))
     telegram_bot_parser.add_argument("--poll-interval", type=float, default=2.0)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Serve local monitor dashboard.")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8765)
-    dashboard_parser.add_argument("--input", type=Path, default=Path("data/monitor-short-all.jsonl"))
+    dashboard_parser.add_argument("--input", type=Path, default=Path("data/monitor-kalshi-poly.jsonl"))
 
     args = parser.parse_args()
     if args.command == "scan":
@@ -359,7 +360,7 @@ def main() -> None:
 
 
 def _scan(args: argparse.Namespace) -> None:
-    limitless_markets = _fetch_limitless(args.limit, args.query or "")
+    limitless_markets = _fetch_kalshi(args.limit, args.query or "")
     polymarket_markets = _fetch_polymarket(args.limit, args.query or "")
     opportunities = scan_opportunities(
         _filter_markets(limitless_markets, args.min_liquidity),
@@ -372,7 +373,9 @@ def _scan(args: argparse.Namespace) -> None:
 
 
 def _markets(args: argparse.Namespace) -> None:
-    if args.source == "limitless":
+    if args.source == "kalshi":
+        markets = kalshi.fetch_markets(limit=args.limit)
+    elif args.source == "limitless":
         markets = limitless.fetch_markets(limit=args.limit)
     else:
         markets = polymarket.fetch_markets(limit=args.limit)
@@ -381,7 +384,7 @@ def _markets(args: argparse.Namespace) -> None:
 
 
 def _candidates(args: argparse.Namespace) -> None:
-    limitless_markets = _fetch_limitless(args.limit, args.query)
+    limitless_markets = _fetch_kalshi(args.limit, args.query)
     polymarket_markets = _fetch_polymarket(args.limit, args.query)
     rows = []
 
@@ -415,7 +418,7 @@ def _candidates(args: argparse.Namespace) -> None:
 def _diagnose(args: argparse.Namespace) -> None:
     rows = []
     for query in args.query:
-        limitless_markets = _fetch_limitless(args.limit, query)
+        limitless_markets = _fetch_kalshi(args.limit, query)
         polymarket_markets = _fetch_polymarket(args.limit, query)
         pair_count = 0
         candidate_count = 0
@@ -491,7 +494,7 @@ def _health(args: argparse.Namespace) -> None:
 
 
 def _depth_scan(args: argparse.Namespace) -> None:
-    limitless_markets = _fetch_limitless(args.limit, args.query)
+    limitless_markets = _fetch_kalshi(args.limit, args.query)
     polymarket_markets = _fetch_polymarket(args.limit, args.query)
     rows = scan_depth_candidates(
         limitless_markets,
@@ -562,7 +565,7 @@ def _near_opportunities(args: argparse.Namespace) -> None:
 
 
 def _depth_sweep(args: argparse.Namespace) -> None:
-    limitless_markets = _fetch_limitless(args.limit, args.query)
+    limitless_markets = _fetch_kalshi(args.limit, args.query)
     polymarket_markets = _fetch_polymarket(args.limit, args.query)
     rows = sweep_depth(
         limitless_markets,
@@ -580,7 +583,7 @@ def _depth_sweep(args: argparse.Namespace) -> None:
 
 
 def _depth_max(args: argparse.Namespace) -> None:
-    limitless_markets = _fetch_limitless(args.limit, args.query)
+    limitless_markets = _fetch_kalshi(args.limit, args.query)
     polymarket_markets = _fetch_polymarket(args.limit, args.query)
     result = find_max_depth_size(
         query=args.query,
@@ -600,7 +603,7 @@ def _depth_max(args: argparse.Namespace) -> None:
 
 
 def _fees(args: argparse.Namespace) -> None:
-    markets = _fetch_limitless(args.limit, args.query) + _fetch_polymarket(args.limit, args.query)
+    markets = _fetch_kalshi(args.limit, args.query) + _fetch_polymarket(args.limit, args.query)
     prices = _parse_sizes(args.prices)
     rows = []
     for market in markets:
@@ -643,6 +646,7 @@ def _monitor(args: argparse.Namespace) -> None:
                     min_profit=args.min_profit,
                     route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
                     route_cost_bps=_parse_cost_map(args.route_cost_bps),
+                    max_depth_pairs=args.max_depth_pairs,
                 )
                 payload = _serializable(asdict(snapshot))
                 _append_jsonl(payload, args.output)
@@ -973,6 +977,7 @@ def _translate_risk_reason(value: str) -> str:
         "fee_estimate_missing": "нет оценки комиссий",
         "fee_model_uncertain": "комиссии оценены неуверенно",
         "limitless_fee_curve_unknown": "неизвестная кривая комиссии Limitless",
+        "kalshi_fee_model_not_implemented_use_manual_fee_bps": "Kalshi комиссия через ручной запас",
         "low_manual_fee_buffer": "низкий ручной запас комиссии",
         "filtered_candidate": "кандидат отфильтрован",
     }.get(value, value)
@@ -1008,28 +1013,28 @@ def _filter_markets(markets: list, min_liquidity: float) -> list:
 
 
 def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
-    limitless_seed = limitless.fetch_markets(limit=args.limit) if args.all_markets or not args.query else []
+    kalshi_seed = kalshi.fetch_markets(limit=args.limit) if args.all_markets or not args.query else []
     polymarket_seed = polymarket.fetch_markets_expanded(limit=args.limit) if args.all_markets or not args.query else []
-    limitless_query = [
+    kalshi_query = [
         market
         for query in args.query
-        for market in _fetch_limitless(args.limit, query)
+        for market in _fetch_kalshi(args.limit, query)
     ]
     polymarket_query = [
         market
         for query in args.query
         for market in _fetch_polymarket(args.limit, query)
     ]
-    limitless_markets = _dedupe_markets([*limitless_seed, *limitless_query])
+    kalshi_markets = _dedupe_markets([*kalshi_seed, *kalshi_query])
     polymarket_markets = _dedupe_markets([*polymarket_seed, *polymarket_query])
 
     if args.category:
-        limitless_markets = _filter_by_any_category(limitless_markets, args.category)
+        kalshi_markets = _filter_by_any_category(kalshi_markets, args.category)
         polymarket_markets = _filter_by_any_category(polymarket_markets, args.category)
 
-    limitless_markets = _filter_by_close_window(limitless_markets, args.min_close_minutes, args.max_close_hours)
+    kalshi_markets = _filter_by_close_window(kalshi_markets, args.min_close_minutes, args.max_close_hours)
     polymarket_markets = _filter_by_close_window(polymarket_markets, args.min_close_minutes, args.max_close_hours)
-    return limitless_markets, polymarket_markets
+    return kalshi_markets, polymarket_markets
 
 
 def _dedupe_markets(markets: object) -> list:
@@ -1077,6 +1082,10 @@ def _filter_by_close_window(markets: list, min_close_minutes: float | None, max_
 
 def _fetch_limitless(limit: int, query: str) -> list:
     return limitless.search_markets(query, limit=limit) if query else limitless.fetch_markets(limit=limit)
+
+
+def _fetch_kalshi(limit: int, query: str) -> list:
+    return kalshi.search_markets(query, limit=limit) if query else kalshi.fetch_markets(limit=limit)
 
 
 def _fetch_polymarket(limit: int, query: str) -> list:
