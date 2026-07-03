@@ -4,12 +4,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from datetime import datetime, timedelta, timezone
 
 from argparse import Namespace
 
-from prediction_arb.cli import _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
+from prediction_arb.cli import _fetch_monitor_universe, _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
 from prediction_arb.models import Market, TopOfBook
 
 
@@ -94,6 +95,23 @@ class CliTests(unittest.TestCase):
         strong = Namespace(net_edge=0.02, depth_edge=0.1, top_of_book_edge=0.1, match_score=0.1)
 
         self.assertGreater(_near_miss_sort_key(strong), _near_miss_sort_key(weak))
+
+    def test_fetch_monitor_universe_combines_all_markets_and_queries(self) -> None:
+        all_limitless = [Market("limitless", "all", "All", None, None, None, None, TopOfBook(), {})]
+        query_limitless = [Market("limitless", "query", "Query", None, None, None, None, TopOfBook(), {})]
+        all_poly = [Market("polymarket", "all", "All", None, None, None, None, TopOfBook(), {})]
+        query_poly = [Market("polymarket", "query", "Query", None, None, None, None, TopOfBook(), {})]
+        args = Namespace(query=["btc"], category=[], all_markets=True, limit=10, min_close_minutes=None, max_close_hours=None)
+
+        with patch("prediction_arb.cli.limitless.fetch_markets", return_value=all_limitless), patch(
+            "prediction_arb.cli.polymarket.fetch_markets_expanded", return_value=all_poly
+        ), patch("prediction_arb.cli._fetch_limitless", return_value=query_limitless), patch(
+            "prediction_arb.cli._fetch_polymarket", return_value=query_poly
+        ):
+            limitless_rows, polymarket_rows = _fetch_monitor_universe(args)
+
+        self.assertEqual([row.market_id for row in limitless_rows], ["all", "query"])
+        self.assertEqual([row.market_id for row in polymarket_rows], ["all", "query"])
 
 
 if __name__ == "__main__":

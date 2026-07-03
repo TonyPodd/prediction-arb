@@ -17,6 +17,7 @@ from prediction_arb.depth import estimate_market_taker_fee_per_share, find_max_d
 from prediction_arb.diagnostics import build_health_report
 from prediction_arb.matching import market_match_details
 from prediction_arb.monitor import _opportunity_key, build_telegram_payload, build_webhook_payload, format_new_opportunity_alert, monitor_once
+from prediction_arb.near import append_near_opportunities, select_near_opportunities
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
@@ -120,6 +121,27 @@ def main() -> None:
     near_parser.add_argument("--max-close-hours", type=float)
     near_parser.add_argument("--top", type=int, default=20)
     near_parser.add_argument("--output", type=Path)
+
+    near_opps_parser = subparsers.add_parser("near-opportunities", help="Show positive-edge candidates rejected by profit/cost filters.")
+    near_opps_parser.add_argument("--query", action="append", default=[])
+    near_opps_parser.add_argument("--category", action="append", default=[])
+    near_opps_parser.add_argument("--all-markets", action="store_true")
+    near_opps_parser.add_argument("--limit", type=int, default=300)
+    near_opps_parser.add_argument("--size", type=float, default=100.0)
+    near_opps_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    near_opps_parser.add_argument("--min-profit", type=float, default=1.0)
+    near_opps_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    near_opps_parser.add_argument("--fee-bps", type=float, default=50.0)
+    near_opps_parser.add_argument("--route-fixed-cost", default="*=2")
+    near_opps_parser.add_argument("--route-cost-bps", default="*=25")
+    near_opps_parser.add_argument("--min-match-score", type=float, default=0.25)
+    near_opps_parser.add_argument("--min-close-minutes", type=float)
+    near_opps_parser.add_argument("--max-close-hours", type=float, default=24.0)
+    near_opps_parser.add_argument("--near-min-edge", type=float, default=0.0)
+    near_opps_parser.add_argument("--top", type=int, default=20)
+    near_opps_parser.add_argument("--save", action="store_true")
+    near_opps_parser.add_argument("--near-output", type=Path, default=Path("data/near-opportunities.jsonl"))
+    near_opps_parser.add_argument("--output", type=Path)
 
     sweep_parser = subparsers.add_parser("depth-sweep", help="Run depth scan across multiple share sizes.")
     sweep_parser.add_argument("--query", required=True)
@@ -272,6 +294,8 @@ def main() -> None:
         _depth_scan(args)
     elif args.command == "near-misses":
         _near_misses(args)
+    elif args.command == "near-opportunities":
+        _near_opportunities(args)
     elif args.command == "depth-sweep":
         _depth_sweep(args)
     elif args.command == "depth-max":
@@ -480,6 +504,32 @@ def _near_misses(args: argparse.Namespace) -> None:
     rejected = [row for row in rows if row.rejection_reason]
     rejected.sort(key=_near_miss_sort_key, reverse=True)
     payload = [_serializable(asdict(item)) for item in rejected[: args.top]]
+    _write_or_print(payload, args.output)
+
+
+def _near_opportunities(args: argparse.Namespace) -> None:
+    if not args.query and not args.category:
+        args.all_markets = True
+    limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+    rows = scan_depth_candidates(
+        limitless_markets,
+        polymarket_markets,
+        size=args.size,
+        min_net_edge=args.min_net_edge,
+        safety_buffer=args.safety_buffer,
+        min_match_score=args.min_match_score,
+        allow_partial=False,
+        fee_bps=args.fee_bps,
+        min_profit=args.min_profit,
+        route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+        route_cost_bps=_parse_cost_map(args.route_cost_bps),
+        include_filtered=True,
+    )
+    near = select_near_opportunities(rows, min_edge=args.near_min_edge, top=args.top)
+    if args.save:
+        records = append_near_opportunities(near, args.near_output, source="near-opportunities")
+        print(f"Saved {len(records)} near opportunities to {args.near_output}")
+    payload = [_serializable(asdict(item)) for item in near]
     _write_or_print(payload, args.output)
 
 
@@ -874,20 +924,20 @@ def _filter_markets(markets: list, min_liquidity: float) -> list:
 
 
 def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
-    if args.query:
-        limitless_markets = _dedupe_markets(
-            market
-            for query in args.query
-            for market in _fetch_limitless(args.limit, query)
-        )
-        polymarket_markets = _dedupe_markets(
-            market
-            for query in args.query
-            for market in _fetch_polymarket(args.limit, query)
-        )
-    else:
-        limitless_markets = limitless.fetch_markets(limit=args.limit)
-        polymarket_markets = polymarket.fetch_markets(limit=args.limit)
+    limitless_seed = limitless.fetch_markets(limit=args.limit) if args.all_markets or not args.query else []
+    polymarket_seed = polymarket.fetch_markets_expanded(limit=args.limit) if args.all_markets or not args.query else []
+    limitless_query = [
+        market
+        for query in args.query
+        for market in _fetch_limitless(args.limit, query)
+    ]
+    polymarket_query = [
+        market
+        for query in args.query
+        for market in _fetch_polymarket(args.limit, query)
+    ]
+    limitless_markets = _dedupe_markets([*limitless_seed, *limitless_query])
+    polymarket_markets = _dedupe_markets([*polymarket_seed, *polymarket_query])
 
     if args.category:
         limitless_markets = _filter_by_any_category(limitless_markets, args.category)
