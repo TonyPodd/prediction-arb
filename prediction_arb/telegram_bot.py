@@ -115,7 +115,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         max_hours = _float(parts[2]) if len(parts) > 2 and _float(parts[2]) > 0 else 24.0
         category = parts[3] if len(parts) > 3 else ""
         limitless_markets = limitless.fetch_markets(limit=limit)
-        polymarket_markets = polymarket.fetch_markets(limit=limit)
+        polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
         if category:
             limitless_markets = _filter_by_category(limitless_markets, category)
             polymarket_markets = _filter_by_category(polymarket_markets, category)

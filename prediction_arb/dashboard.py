@@ -71,7 +71,7 @@ def _handler(default_input: Path):
                     category = query.get("category", [""])[0]
                     max_close_hours = _float(query.get("max_close_hours", [""])[0])
                     limitless_markets = limitless.fetch_markets(limit=limit)
-                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
                         polymarket_markets = _filter_by_category(polymarket_markets, category)
@@ -90,7 +90,7 @@ def _handler(default_input: Path):
                     route_fixed_costs = _parse_cost_map(query.get("route_fixed_cost", ["*=2"])[0])
                     route_cost_bps = _parse_cost_map(query.get("route_cost_bps", ["*=25"])[0])
                     limitless_markets = limitless.fetch_markets(limit=limit)
-                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
                         polymarket_markets = _filter_by_category(polymarket_markets, category)
@@ -135,7 +135,7 @@ def _handler(default_input: Path):
                     max_close_hours = _float(query.get("max_close_hours", ["24"])[0])
                     category = query.get("category", ["crypto"])[0]
                     limitless_markets = limitless.fetch_markets(limit=limit)
-                    polymarket_markets = polymarket.fetch_markets(limit=limit)
+                    polymarket_markets = polymarket.fetch_markets_expanded(limit=limit)
                     if category:
                         limitless_markets = _filter_by_category(limitless_markets, category)
                         polymarket_markets = _filter_by_category(polymarket_markets, category)

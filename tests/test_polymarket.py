@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from prediction_arb.models import Market, TopOfBook
-from prediction_arb.sources.polymarket import fetch_markets, token_id_for_outcome
+from prediction_arb.sources.polymarket import fetch_markets, fetch_markets_expanded, token_id_for_outcome
 
 
 def market(clob_token_ids: object) -> Market:
@@ -63,6 +63,44 @@ class PolymarketTests(unittest.TestCase):
         self.assertEqual(len(rows), 250)
         self.assertEqual([call["offset"] for call in calls], [0, 100, 200])
         self.assertEqual([call["limit"] for call in calls], [100, 100, 50])
+
+    def test_fetch_markets_expanded_reads_event_markets_and_skips_closed(self) -> None:
+        def fake_get_json(url: str, params: dict) -> list[dict]:
+            if url.endswith("/markets"):
+                return []
+            if url.endswith("/events"):
+                return [
+                    {
+                        "title": "Popular event",
+                        "slug": "popular-event",
+                        "markets": [
+                            {
+                                "id": "closed",
+                                "question": "Closed market?",
+                                "closed": True,
+                                "outcomes": '["Yes","No"]',
+                                "outcomePrices": '["0.4","0.6"]',
+                            },
+                            {
+                                "id": "open",
+                                "question": "Open market?",
+                                "active": True,
+                                "closed": False,
+                                "enableOrderBook": True,
+                                "clobTokenIds": '["yes","no"]',
+                                "outcomes": '["Yes","No"]',
+                                "outcomePrices": '["0.4","0.6"]',
+                            },
+                        ],
+                    }
+                ]
+            return []
+
+        with patch("prediction_arb.sources.polymarket.get_json", side_effect=fake_get_json):
+            rows = fetch_markets_expanded(limit=5)
+
+        self.assertEqual([row.market_id for row in rows], ["open"])
+        self.assertEqual(rows[0].url, "https://polymarket.com/event/popular-event")
 
 
 if __name__ == "__main__":

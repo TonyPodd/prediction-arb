@@ -946,7 +946,7 @@ def _fetch_limitless(limit: int, query: str) -> list:
 
 
 def _fetch_polymarket(limit: int, query: str) -> list:
-    return polymarket.search_markets(query, limit=limit) if query else polymarket.fetch_markets(limit=limit)
+    return polymarket.search_markets(query, limit=limit) if query else polymarket.fetch_markets_expanded(limit=limit)
 
 
 def _parse_datetime(value: object) -> datetime | None:

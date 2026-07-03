@@ -10,6 +10,28 @@ GAMMA_URL = "https://gamma-api.polymarket.com"
 
 
 def fetch_markets(limit: int = 100) -> list[Market]:
+    return _fetch_market_feed(limit=limit, order="volume24hr")
+
+
+def fetch_markets_expanded(limit: int = 100) -> list[Market]:
+    markets: list[Market] = []
+    seen: set[str] = set()
+    per_feed_limit = max(limit, 200)
+
+    for order in ("volume24hr", "volume_24hr", "liquidity", "endDate"):
+        _extend_unique(markets, seen, _fetch_market_feed(limit=per_feed_limit, order=order), limit=limit)
+        if len(markets) >= limit:
+            return markets[:limit]
+
+    for order in ("volume_24hr", "liquidity", "end_date"):
+        _extend_unique(markets, seen, _fetch_event_markets(limit=per_feed_limit, order=order), limit=limit)
+        if len(markets) >= limit:
+            return markets[:limit]
+
+    return markets[:limit]
+
+
+def _fetch_market_feed(limit: int, order: str) -> list[Market]:
     markets: list[Market] = []
     seen: set[str] = set()
     offset = 0
@@ -24,7 +46,7 @@ def fetch_markets(limit: int = 100) -> list[Market]:
                 "closed": "false",
                 "limit": current_limit,
                 "offset": offset,
-                "order": "volume24hr",
+                "order": order,
                 "ascending": "false",
             },
         )
@@ -49,11 +71,60 @@ def fetch_markets(limit: int = 100) -> list[Market]:
     return markets[:limit]
 
 
+def _fetch_event_markets(limit: int, order: str) -> list[Market]:
+    markets: list[Market] = []
+    seen: set[str] = set()
+    offset = 0
+    page_size = 100
+
+    while len(markets) < limit and offset < 10_000:
+        current_limit = min(page_size, limit - len(markets))
+        data = get_json(
+            f"{GAMMA_URL}/events",
+            {
+                "active": "true",
+                "closed": "false",
+                "limit": current_limit,
+                "offset": offset,
+                "order": order,
+                "ascending": "false",
+            },
+        )
+        rows = data if isinstance(data, list) else data.get("events", [])
+        if not rows:
+            break
+        for event in rows:
+            if not isinstance(event, dict):
+                continue
+            for row in event.get("markets", []) if isinstance(event.get("markets"), list) else []:
+                if not isinstance(row, dict) or not _is_active_market_row(row):
+                    continue
+                enriched = dict(row)
+                enriched["events"] = [event]
+                enriched["eventSlug"] = event.get("slug")
+                enriched["eventTitle"] = event.get("title")
+                market = _normalize_market(enriched)
+                key = market.market_id or market.title
+                if key in seen:
+                    continue
+                seen.add(key)
+                markets.append(market)
+                if len(markets) >= limit:
+                    break
+            if len(markets) >= limit:
+                break
+        offset += len(rows)
+        if len(rows) < current_limit:
+            break
+
+    return markets[:limit]
+
+
 def search_markets(query: str, limit: int = 100) -> list[Market]:
     query_tokens = _tokens(query)
     if not query_tokens:
         return fetch_markets(limit=limit)
-    markets = fetch_markets(limit=max(limit, 500))
+    markets = fetch_markets_expanded(limit=max(limit, 500))
     return [market for market in markets if query_tokens <= _tokens(_search_text(market))][:limit]
 
 
@@ -108,13 +179,34 @@ def _normalize_market(row: dict) -> Market:
         source="polymarket",
         market_id=market_id,
         title=title,
-        url=f"https://polymarket.com/event/{slug}" if slug else None,
+        url=f"https://polymarket.com/event/{row.get('eventSlug') or slug}" if (row.get("eventSlug") or slug) else None,
         close_time=row.get("endDate") or row.get("endDateIso") or row.get("closeTime"),
         volume=_float(row.get("volume") or row.get("volume24hr")),
         liquidity=_float(row.get("liquidity")),
         top=TopOfBook(yes_bid=yes_bid, yes_ask=yes_ask, no_bid=no_bid, no_ask=no_ask),
         raw=row,
     )
+
+
+def _extend_unique(markets: list[Market], seen: set[str], rows: list[Market], *, limit: int) -> None:
+    for market in rows:
+        key = market.market_id or market.title
+        if key in seen:
+            continue
+        seen.add(key)
+        markets.append(market)
+        if len(markets) >= limit:
+            break
+
+
+def _is_active_market_row(row: dict) -> bool:
+    if row.get("closed") is True or row.get("archived") is True:
+        return False
+    if row.get("active") is False:
+        return False
+    if row.get("enableOrderBook") is False:
+        return False
+    return True
 
 
 def _parse_array(value: object) -> list:
