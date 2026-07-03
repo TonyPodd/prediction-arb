@@ -21,6 +21,7 @@ from prediction_arb.near import append_near_opportunities, select_near_opportuni
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
+from prediction_arb.research import DEFAULT_RESEARCH_FILE, build_research_snapshot
 from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_candidates
 from prediction_arb.risk import assess_candidate_risk
@@ -205,6 +206,31 @@ def main() -> None:
     monitor_parser.add_argument("--suspicious-min-risk", type=int, default=25)
     monitor_parser.add_argument("--stop-on-error", action="store_true", help="Exit instead of appending an error snapshot when a scan fails.")
 
+    research_parser = subparsers.add_parser("research-monitor", help="Slow read-only 7-day monitor for near-opportunities and matcher research.")
+    research_parser.add_argument("--query", action="append", default=[])
+    research_parser.add_argument("--category", action="append", default=[])
+    research_parser.add_argument("--all-markets", action="store_true")
+    research_parser.add_argument("--limit", type=int, default=500)
+    research_parser.add_argument("--size", type=float, default=100.0)
+    research_parser.add_argument("--interval", type=float, default=900.0)
+    research_parser.add_argument("--iterations", type=int, default=0, help="0 means run until interrupted.")
+    research_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    research_parser.add_argument("--min-profit", type=float, default=1.0)
+    research_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    research_parser.add_argument("--fee-bps", type=float, default=50.0)
+    research_parser.add_argument("--route-fixed-cost", default="*=2")
+    research_parser.add_argument("--route-cost-bps", default="*=25")
+    research_parser.add_argument("--min-match-score", type=float, default=0.25)
+    research_parser.add_argument("--min-close-minutes", type=float)
+    research_parser.add_argument("--max-close-hours", type=float, default=168.0)
+    research_parser.add_argument("--near-min-edge", type=float, default=0.0)
+    research_parser.add_argument("--top", type=int, default=30)
+    research_parser.add_argument("--max-depth-pairs", type=int, default=40, help="Maximum structurally compatible pairs to fetch orderbooks for per iteration. 0 means no limit.")
+    research_parser.add_argument("--output", type=Path, default=DEFAULT_RESEARCH_FILE)
+    research_parser.add_argument("--near-output", type=Path, default=Path("data/near-opportunities.jsonl"))
+    research_parser.add_argument("--print-snapshots", action="store_true")
+    research_parser.add_argument("--stop-on-error", action="store_true")
+
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
     report_parser.add_argument("--input", type=Path, required=True)
     report_parser.add_argument("--top", type=int, default=10)
@@ -304,6 +330,8 @@ def main() -> None:
         _fees(args)
     elif args.command == "monitor":
         _monitor(args)
+    elif args.command == "research-monitor":
+        _research_monitor(args)
     elif args.command == "monitor-report":
         _monitor_report(args)
     elif args.command == "review-report":
@@ -639,6 +667,62 @@ def _monitor(args: argparse.Namespace) -> None:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("Monitor stopped.")
+
+
+def _research_monitor(args: argparse.Namespace) -> None:
+    if not args.query and not args.category:
+        args.all_markets = True
+    scope_label = _monitor_scope_label(args)
+    iteration = 0
+    try:
+        while True:
+            iteration += 1
+            try:
+                limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+                snapshot = build_research_snapshot(
+                    scope=scope_label,
+                    limitless_markets=limitless_markets,
+                    polymarket_markets=polymarket_markets,
+                    size=args.size,
+                    min_net_edge=args.min_net_edge,
+                    min_profit=args.min_profit,
+                    safety_buffer=args.safety_buffer,
+                    fee_bps=args.fee_bps,
+                    route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+                    route_cost_bps=_parse_cost_map(args.route_cost_bps),
+                    min_match_score=args.min_match_score,
+                    near_min_edge=args.near_min_edge,
+                    top=args.top,
+                    max_depth_pairs=args.max_depth_pairs,
+                    near_output=args.near_output,
+                    save_near=True,
+                )
+                _append_jsonl(snapshot, args.output)
+                if args.print_snapshots:
+                    print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+                else:
+                    matching = snapshot.get("matching", {})
+                    print(
+                        f"{snapshot['detected_at']} research "
+                        f"markets={snapshot['source_counts']} "
+                        f"compatible={matching.get('structurally_compatible_pairs', 0)} "
+                        f"depth_pairs={snapshot['depth_pairs_scanned']} "
+                        f"candidates={snapshot['candidate_count']} "
+                        f"near={snapshot['near_count']}"
+                    )
+            except Exception as exc:
+                if args.stop_on_error:
+                    raise
+                payload = _monitor_error_payload(scope_label, exc)
+                payload["type"] = "research_error"
+                _append_jsonl(payload, args.output)
+                print(f"{payload['detected_at']} research_error={payload['error']}")
+
+            if args.iterations and iteration >= args.iterations:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("Research monitor stopped.")
 
 
 def _monitor_report(args: argparse.Namespace) -> None:

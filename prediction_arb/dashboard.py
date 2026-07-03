@@ -51,6 +51,12 @@ def _handler(default_input: Path):
                     limit = _int(query.get("limit", ["200"])[0], default=200)
                     self._send_json(read_monitor_history(path)[-limit:])
                     return
+                if parsed.path == "/api/research":
+                    query = parse_qs(parsed.query)
+                    path = _safe_monitor_path(query.get("input", ["data/research-monitor.jsonl"])[0])
+                    limit = _int(query.get("limit", ["50"])[0], default=50)
+                    self._send_json(_read_jsonl(path)[-limit:])
+                    return
                 if parsed.path == "/api/capital":
                     query = parse_qs(parsed.query)
                     path = _safe_monitor_path(query.get("input", [str(default_input)])[0])
@@ -210,6 +216,24 @@ def _monitor_files() -> list[dict[str, object]]:
     rows = []
     for path in sorted(data_dir.glob("monitor*.jsonl")):
         rows.append({"path": str(path), "name": path.name, "size": path.stat().st_size})
+    return rows
+
+
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
     return rows
 
 
@@ -394,6 +418,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <button class="tab" data-view="portfolio">Бумажный портфель</button>
       <button class="tab" data-view="coverage">Покрытие источников</button>
       <button class="tab" data-view="health">Диагностика</button>
+      <button class="tab" data-view="research">Research 7d</button>
       <button class="tab" data-view="events">События</button>
     </div>
   </header>
@@ -581,10 +606,41 @@ _DASHBOARD_HTML = r"""<!doctype html>
         <div class="panel"><h2>Предупреждения matcher</h2><div class="chips" id="healthWarnings"></div></div>
       </div>
     </section>
+
+    <section class="view" id="research">
+      <div class="panel">
+        <h2>Research monitor на 7 дней</h2>
+        <div class="planner">
+          <label><div class="label">Файл research</div><input id="researchPath" value="data/research-monitor.jsonl"></label>
+          <button class="primary" id="researchRefreshBtn">Обновить research</button>
+        </div>
+        <div class="explain">
+          <div>Это медленный read-only монитор. Он не присылает торговые алерты, а сохраняет “почти сделки”, совместимые пары и причины отказов на горизонте до 7 дней.</div>
+          <div>Цель вкладки - показать, что система что-то находит даже тогда, когда строгий торговый монитор не видит исполнимых сделок после fees и operational costs.</div>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Research снимки</div><div class="value" id="researchSnapshots">0</div></div>
+        <div class="metric"><div class="label">Рынки L / P</div><div class="value" id="researchMarkets">0 / 0</div></div>
+        <div class="metric"><div class="label">Совместимые пары</div><div class="value" id="researchCompatible">0</div></div>
+        <div class="metric"><div class="label">Depth candidates</div><div class="value" id="researchCandidates">0</div></div>
+        <div class="metric"><div class="label">Near-opportunities</div><div class="value warn" id="researchNear">0</div></div>
+        <div class="metric"><div class="label">Лучший near profit</div><div class="value ok" id="researchBestProfit">$0</div></div>
+      </div>
+      <div class="coverage-grid">
+        <div class="panel"><h2>Причины отказов</h2><div class="chips" id="researchRejections"></div></div>
+        <div class="panel"><h2>Предупреждения matcher</h2><div class="chips" id="researchWarnings"></div></div>
+      </div>
+      <div class="panel">
+        <h2>Лучшие near-opportunities</h2>
+        <table><thead><tr><th>Маршрут</th><th>Net edge</th><th>Прибыль</th><th>Причина</th><th>Рынки</th></tr></thead><tbody id="researchTable"></tbody></table>
+      </div>
+      <div class="panel"><h2>Research события</h2><div class="events" id="researchEvents"></div></div>
+    </section>
   </main>
 
   <script>
-    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, review: [], reviewReport: null, near: [] };
+    const state = { input: "data/monitor-short-all.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, research: [], review: [], reviewReport: null, near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -619,6 +675,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       await refreshPlanner();
       await refreshPortfolio();
       await refreshReview();
+      await refreshResearch();
       if (!state.coverage) await refreshCoverage();
       if (!state.health) await refreshHealth();
       render();
@@ -648,6 +705,11 @@ _DASHBOARD_HTML = r"""<!doctype html>
       const limit = Number(el("healthLimit").value || 300);
       const size = Number(el("healthSize").value || 100);
       state.health = await json(`/api/health?category=${category}&max_close_hours=${hours}&limit=${limit}&size=${size}&fee_bps=50&route_fixed_cost=${encodeURIComponent("*=2")}&route_cost_bps=${encodeURIComponent("*=25")}`);
+    }
+
+    async function refreshResearch() {
+      const path = encodeURIComponent(el("researchPath").value || "data/research-monitor.jsonl");
+      state.research = await json(`/api/research?input=${path}&limit=80`);
     }
 
     async function refreshReview() {
@@ -704,6 +766,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderPortfolio(state.portfolio || {});
       renderCoverage(state.coverage || {});
       renderHealth(state.health || {});
+      renderResearch(state.research || []);
       renderReview(state.review || []);
       renderReviewReport(state.reviewReport || {});
       renderNear(state.near || []);
@@ -793,6 +856,36 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderScanSummary("healthFullCosts", scans.full_costs || {});
       el("healthRejections").innerHTML = chips((scans.full_costs || {}).rejection_counts || {}, "reject");
       el("healthWarnings").innerHTML = chips(matching.warning_counts || {}, "warn");
+    }
+
+    function renderResearch(rows) {
+      const snapshots = rows.filter(row => row.type === "research_snapshot");
+      const errors = rows.filter(row => row.type === "research_error");
+      const latest = snapshots[snapshots.length - 1] || {};
+      const counts = latest.source_counts || {};
+      const matching = latest.matching || {};
+      const nearRows = latest.near || [];
+      const best = latest.best_near || nearRows[0] || {};
+      el("researchSnapshots").textContent = snapshots.length;
+      el("researchMarkets").textContent = `${counts.limitless || 0} / ${counts.polymarket || 0}`;
+      el("researchCompatible").textContent = matching.structurally_compatible_pairs || 0;
+      el("researchCandidates").textContent = latest.candidate_count || 0;
+      el("researchNear").textContent = latest.near_count || 0;
+      el("researchBestProfit").textContent = money(best.estimated_profit);
+      el("researchRejections").innerHTML = chips(latest.rejection_counts || {}, "reject");
+      el("researchWarnings").innerHTML = chips(matching.warning_counts || {}, "warn");
+      el("researchTable").innerHTML = nearRows.length ? nearRows.map(row => `
+        <tr>
+          <td><div class="route">${row.outcome || ""} ${row.route || `${row.buy_source || ""}->${row.sell_source || ""}`}</div><div class="muted">${row.detected_at || ""}</div></td>
+          <td class="num ${row.net_edge >= 0 ? "ok" : "bad"}">${pct(row.net_edge)}</td>
+          <td class="num ok">${money(row.estimated_profit)}</td>
+          <td class="bad">${translateReason(row.rejection_reason || "")}</td>
+          <td>${escapeHtml(row.buy_title || "")}<br><span class="muted">${escapeHtml(row.sell_title || "")}</span></td>
+        </tr>`).join("") : `<tr><td colspan="5" class="muted">Research monitor пока не сохранил near-opportunities. Это нормально, если еще не прошла первая итерация или все кандидаты имеют отрицательный edge.</td></tr>`;
+      el("researchEvents").innerHTML = [...rows].slice(-20).reverse().map(row => {
+        if (row.type === "research_error") return `<div class="event error"><strong class="bad">Research ошибка</strong><br><span class="muted">${row.detected_at || ""}</span><br>${escapeHtml(row.error || "")}</div>`;
+        return `<div class="event"><strong>${row.near_count || 0} near</strong> / ${row.candidate_count || 0} candidates<br><span class="muted">${row.detected_at || ""}</span><br><span class="muted">${escapeHtml(row.scope || "")}</span></div>`;
+      }).join("") || `<div class="muted">Research snapshots еще не записаны.</div>`;
     }
 
     function renderScanSummary(targetId, scan) {
@@ -896,7 +989,9 @@ _DASHBOARD_HTML = r"""<!doctype html>
         incomplete_buy_fill: "стакан покупки не заполняет размер",
         incomplete_sell_fill: "стакан продажи не заполняет размер",
         net_edge_below_min: "net edge ниже минимума",
+        net_edge_below_threshold: "net edge ниже порога",
         profit_below_min: "прибыль ниже минимума",
+        profit_below_threshold: "прибыль ниже порога",
         orderbook_unavailable: "стакан недоступен",
       };
       return map[value] || value;
@@ -977,6 +1072,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("portfolioRefreshBtn").addEventListener("click", () => refreshPortfolio().then(render));
     el("coverageRefreshBtn").addEventListener("click", () => refreshCoverage().then(render));
     el("healthRefreshBtn").addEventListener("click", () => refreshHealth().then(render));
+    el("researchRefreshBtn").addEventListener("click", () => refreshResearch().then(render));
     el("reviewRefreshBtn").addEventListener("click", () => refreshReview().then(render));
     el("nearRefreshBtn").addEventListener("click", refreshNearMisses);
     el("paperEnterBtn").addEventListener("click", paperEnter);
