@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from prediction_arb.models import Market, TopOfBook
-from prediction_arb.sources.polymarket import fetch_markets, fetch_markets_expanded, token_id_for_outcome
+from prediction_arb.sources.polymarket import fetch_markets, fetch_markets_expanded, fetch_public_search_markets, search_markets, token_id_for_outcome
 
 
 def market(clob_token_ids: object) -> Market:
@@ -101,6 +101,55 @@ class PolymarketTests(unittest.TestCase):
 
         self.assertEqual([row.market_id for row in rows], ["open"])
         self.assertEqual(rows[0].url, "https://polymarket.com/event/popular-event")
+
+    def test_fetch_public_search_markets_reads_event_markets(self) -> None:
+        payload = {
+            "events": [
+                {
+                    "title": "Bitcoin above ___ on July 3?",
+                    "slug": "bitcoin-above-on-july-3-2026",
+                    "markets": [
+                        {
+                            "id": "btc-70k",
+                            "question": "Will the price of Bitcoin be above $70,000 on July 3?",
+                            "active": True,
+                            "closed": False,
+                            "enableOrderBook": True,
+                            "clobTokenIds": '["yes","no"]',
+                            "outcomes": '["Yes","No"]',
+                            "outcomePrices": '["0.4","0.6"]',
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("prediction_arb.sources.polymarket.get_json", return_value=payload):
+            rows = fetch_public_search_markets("bitcoin", limit=10)
+
+        self.assertEqual([row.market_id for row in rows], ["btc-70k"])
+        self.assertEqual(rows[0].raw["eventTitle"], "Bitcoin above ___ on July 3?")
+        self.assertEqual(rows[0].url, "https://polymarket.com/event/bitcoin-above-on-july-3-2026")
+
+    def test_search_markets_merges_public_search_when_local_feed_has_no_match(self) -> None:
+        public_row = Market(
+            source="polymarket",
+            market_id="public",
+            title="Bitcoin public result",
+            url=None,
+            close_time=None,
+            volume=None,
+            liquidity=None,
+            top=TopOfBook(),
+            raw={},
+        )
+
+        with patch("prediction_arb.sources.polymarket.fetch_markets_expanded", return_value=[]), patch(
+            "prediction_arb.sources.polymarket.fetch_public_search_markets", return_value=[public_row]
+        ):
+            rows = search_markets("bitcoin", limit=10)
+
+        self.assertEqual([row.market_id for row in rows], ["public"])
 
 
 if __name__ == "__main__":

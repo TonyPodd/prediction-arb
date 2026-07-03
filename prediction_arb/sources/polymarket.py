@@ -124,8 +124,49 @@ def search_markets(query: str, limit: int = 100) -> list[Market]:
     query_tokens = _tokens(query)
     if not query_tokens:
         return fetch_markets(limit=limit)
-    markets = fetch_markets_expanded(limit=max(limit, 500))
-    return [market for market in markets if query_tokens <= _tokens(_search_text(market))][:limit]
+    markets: list[Market] = []
+    seen: set[str] = set()
+    local_matches = [
+        market
+        for market in fetch_markets_expanded(limit=max(limit, 500))
+        if query_tokens <= _tokens(_search_text(market))
+    ]
+    _extend_unique(markets, seen, local_matches, limit=limit)
+    if len(markets) < limit:
+        _extend_unique(markets, seen, fetch_public_search_markets(query, limit=max(limit, 100)), limit=limit)
+    return markets[:limit]
+
+
+def fetch_public_search_markets(query: str, limit: int = 100) -> list[Market]:
+    data = get_json(
+        f"{GAMMA_URL}/public-search",
+        {
+            "q": query,
+            "limit": limit,
+        },
+    )
+    events = data.get("events", []) if isinstance(data, dict) else []
+    markets: list[Market] = []
+    seen: set[str] = set()
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict):
+            continue
+        for row in event.get("markets", []) if isinstance(event.get("markets"), list) else []:
+            if not isinstance(row, dict) or not _is_active_market_row(row):
+                continue
+            enriched = dict(row)
+            enriched["events"] = [event]
+            enriched["eventSlug"] = event.get("slug")
+            enriched["eventTitle"] = event.get("title")
+            market = _normalize_market(enriched)
+            key = market.market_id or market.title
+            if key in seen:
+                continue
+            seen.add(key)
+            markets.append(market)
+            if len(markets) >= limit:
+                return markets
+    return markets
 
 
 def fetch_orderbook(market: Market, outcome: str) -> OrderBook | None:
