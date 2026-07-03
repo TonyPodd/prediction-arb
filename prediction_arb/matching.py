@@ -97,6 +97,10 @@ def market_match_details(left: Market, right: Market) -> MatchDetails:
 
 def condition_from_market(market: Market) -> Condition:
     raw = market.raw or {}
+    if market.source == "kalshi":
+        kalshi_condition = _condition_from_kalshi(market)
+        if kalshi_condition is not None:
+            return kalshi_condition
     summary_text = " ".join(
         str(item)
         for item in [
@@ -188,10 +192,14 @@ def _condition_kind(value: str) -> str:
         return "open_up_down"
     if "up or down" in normalized:
         return "directional_up_down"
-    if re.search(r"\b(before|by|by end of)\b", normalized):
-        return "deadline_yes_no"
+    if re.search(r"\bprice\s+up\s+in\s+next\s+\d+\s*(?:m|min|mins|minute|minutes)\b", normalized):
+        return "directional_up_down"
     if re.search(r"\b(above|below|over|under)\s+\$?[0-9]", normalized):
         return "threshold"
+    if re.search(r"\b(before|by|by end of)\b", normalized):
+        return "deadline_yes_no"
+    if re.search(r"\bprice\s+range\b", normalized):
+        return "price_range"
     if "win the" in normalized and ("world cup" in normalized or "championship" in normalized):
         return "outright_winner"
     if re.search(r"\bwin on \d{4}-\d{2}-\d{2}\b", normalized):
@@ -220,6 +228,64 @@ def _condition_warnings(left: Condition, right: Condition) -> list[str]:
     if left.deadline and right.deadline and left.deadline != right.deadline:
         warnings.append("deadline_differs")
     return warnings
+
+
+def _condition_from_kalshi(market: Market) -> Condition | None:
+    raw = market.raw or {}
+    title = str(market.title or "")
+    text = " ".join(
+        str(item)
+        for item in [
+            title,
+            raw.get("yes_sub_title", ""),
+            raw.get("no_sub_title", ""),
+            raw.get("rules_primary", ""),
+        ]
+        if item
+    )
+    asset = _asset(text)
+    strike_type = str(raw.get("strike_type") or "").lower()
+    close_deadline = _deadline(market.close_time)
+
+    if re.search(r"\bprice\s+up\s+in\s+next\s+\d+\s*(?:m|min|mins|minute|minutes)\b", title.lower()):
+        return Condition(
+            kind="directional_up_down",
+            asset=asset,
+            direction="up_or_down",
+            threshold=None,
+            interval_minutes=_interval_minutes(title),
+            price_source=_price_source(text),
+            price_pair=_price_pair(text),
+            deadline=close_deadline,
+        )
+
+    if strike_type in {"greater", "greater_or_equal", "less", "less_or_equal"}:
+        is_greater = strike_type.startswith("greater")
+        threshold = _float(raw.get("floor_strike") if is_greater else raw.get("cap_strike"))
+        return Condition(
+            kind="threshold",
+            asset=asset,
+            direction="above" if is_greater else "below",
+            threshold=threshold,
+            interval_minutes=_interval_minutes(title),
+            price_source=_price_source(text),
+            price_pair=_price_pair(text),
+            deadline=_semantic_deadline(text) or close_deadline,
+        )
+
+    if strike_type == "between":
+        return Condition(
+            kind="price_range",
+            asset=asset,
+            direction="between",
+            threshold=None,
+            interval_minutes=_interval_minutes(title),
+            price_source=_price_source(text),
+            price_pair=_price_pair(text),
+            deadline=_semantic_deadline(text) or close_deadline,
+        )
+
+    return None
 
 
 def _asset(value: str) -> str | None:
@@ -272,6 +338,8 @@ def _threshold(value: str) -> float | None:
 
 def _price_source(value: str) -> str | None:
     normalized = value.lower()
+    if "cf benchmarks" in normalized or "brti" in normalized:
+        return "cf_benchmarks"
     for source in ("chainlink", "binance", "coinbase", "kraken", "okx", "bybit"):
         if re.search(rf"\b{source}\b", normalized):
             return source
@@ -280,6 +348,8 @@ def _price_source(value: str) -> str | None:
 
 def _price_pair(value: str) -> str | None:
     normalized = value.lower()
+    if "bitcoin real-time index" in normalized or "brti" in normalized:
+        return "btc/usd"
     match = re.search(r"\b(btc|eth|sol|xrp|bnb|doge|hype)[-/]?(usd|usdt|usdc)\b", normalized)
     if not match:
         return None
@@ -360,3 +430,12 @@ def _month_number(value: str) -> int | None:
         "december": 12,
     }
     return months.get(value)
+
+
+def _float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

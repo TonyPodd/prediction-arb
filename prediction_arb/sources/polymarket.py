@@ -126,14 +126,15 @@ def search_markets(query: str, limit: int = 100) -> list[Market]:
         return fetch_markets(limit=limit)
     markets: list[Market] = []
     seen: set[str] = set()
+    _extend_unique(markets, seen, fetch_public_search_markets(query, limit=max(limit, 100)), limit=limit)
+    if len(markets) >= limit:
+        return markets[:limit]
     local_matches = [
         market
-        for market in fetch_markets_expanded(limit=max(limit, 500))
+        for market in fetch_markets_expanded(limit=max(limit, 200))
         if query_tokens <= _tokens(_search_text(market))
     ]
     _extend_unique(markets, seen, local_matches, limit=limit)
-    if len(markets) < limit:
-        _extend_unique(markets, seen, fetch_public_search_markets(query, limit=max(limit, 100)), limit=limit)
     return markets[:limit]
 
 

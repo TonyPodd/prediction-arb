@@ -140,6 +140,67 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(details.right_condition.kind, "open_up_down")
         self.assertIn("condition_kind_differs", details.warnings)
 
+    def test_kalshi_threshold_uses_strike_fields(self) -> None:
+        parsed = condition_from_market(
+            raw_market(
+                "kalshi",
+                "Bitcoin price range on Jul 3, 2026?",
+                {
+                    "yes_sub_title": "$69,300 or above",
+                    "strike_type": "greater",
+                    "floor_strike": "69299.99",
+                    "rules_primary": "If the CF Benchmarks Bitcoin Real-Time Index is above 69299.99.",
+                },
+                "2026-07-03T16:00:00Z",
+            )
+        )
+
+        self.assertEqual(parsed.kind, "threshold")
+        self.assertEqual(parsed.asset, "btc")
+        self.assertEqual(parsed.direction, "above")
+        self.assertEqual(parsed.threshold, 69299.99)
+        self.assertEqual(parsed.price_source, "cf_benchmarks")
+        self.assertEqual(parsed.price_pair, "btc/usd")
+
+    def test_kalshi_between_range_does_not_match_threshold_market(self) -> None:
+        left = raw_market(
+            "kalshi",
+            "Bitcoin price range on Jul 3, 2026?",
+            {
+                "yes_sub_title": "$69,200 to 69,299.99",
+                "strike_type": "between",
+                "floor_strike": "69200",
+                "cap_strike": "69299.99",
+            },
+            "2026-07-03T16:00:00Z",
+        )
+        right = market("polymarket", "Will the price of Bitcoin be above $69,200 on July 3?", "2026-07-03T16:00:00Z")
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.kind, "price_range")
+        self.assertIn("condition_kind_differs", details.warnings)
+
+    def test_kalshi_price_up_next_minutes_extracts_directional_interval(self) -> None:
+        parsed = condition_from_market(
+            raw_market(
+                "kalshi",
+                "BTC price up in next 15 mins?",
+                {
+                    "yes_sub_title": "Target Price: $62,122.92",
+                    "strike_type": "greater_or_equal",
+                    "floor_strike": "62122.92",
+                    "rules_primary": "If the CF Benchmarks BRTI average is at least the previous average.",
+                },
+                "2026-07-03T15:15:00Z",
+            )
+        )
+
+        self.assertEqual(parsed.kind, "directional_up_down")
+        self.assertEqual(parsed.asset, "btc")
+        self.assertEqual(parsed.direction, "up_or_down")
+        self.assertEqual(parsed.interval_minutes, 15)
+
 
 if __name__ == "__main__":
     unittest.main()

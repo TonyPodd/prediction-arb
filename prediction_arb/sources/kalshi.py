@@ -146,7 +146,7 @@ def _normalize_market(row: dict) -> Market:
         market_id=ticker,
         title=title,
         url=f"https://kalshi.com/markets/{ticker.lower()}" if ticker else None,
-        close_time=row.get("expected_expiration_time") or row.get("close_time") or row.get("expiration_time"),
+        close_time=row.get("close_time") or row.get("expected_expiration_time") or row.get("expiration_time"),
         volume=_float(row.get("volume_24h_fp") or row.get("volume_fp")),
         liquidity=_float(row.get("liquidity_dollars")),
         top=TopOfBook(yes_bid=yes_bid, yes_ask=yes_ask, no_bid=no_bid, no_ask=no_ask),
