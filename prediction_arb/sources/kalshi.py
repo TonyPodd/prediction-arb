@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from prediction_arb.http import get_json
+from prediction_arb.http import ApiError, get_json
 from prediction_arb.models import Market, OrderBook, OrderLevel, TopOfBook
 
 
@@ -46,13 +46,21 @@ def search_markets(query: str, limit: int = 100) -> list[Market]:
         return fetch_markets(limit=limit)
     markets: list[Market] = []
     seen: set[str] = set()
-    for tag in _query_tags(query_tokens):
+    crypto_tags = _query_tags(query_tokens)
+    sports_tags = _query_sports_tags(query_tokens)
+    for tag in crypto_tags:
         _extend_unique(markets, seen, _fetch_markets_for_tag(tag, limit=limit), limit=limit)
         if len(markets) >= limit:
             return markets[:limit]
+    for tag in sports_tags:
+        _extend_unique(markets, seen, _fetch_sports_markets_for_tag(tag, query_tokens, limit=limit), limit=limit)
+        if len(markets) >= limit:
+            return markets[:limit]
+    if crypto_tags or sports_tags:
+        return markets[:limit]
     fallback = [
         market
-        for market in fetch_markets(limit=max(limit, 500))
+        for market in fetch_markets(limit=max(limit, 100))
         if query_tokens <= _tokens(_search_text(market))
     ]
     _extend_unique(markets, seen, fallback, limit=limit)
@@ -71,11 +79,45 @@ def _fetch_markets_for_tag(tag: str, limit: int) -> list[Market]:
     series = series_rows.get("series", []) if isinstance(series_rows, dict) else []
     markets: list[Market] = []
     seen: set[str] = set()
-    for row in series if isinstance(series, list) else []:
+    for row in (series if isinstance(series, list) else [])[:12]:
         ticker = row.get("ticker") if isinstance(row, dict) else None
         if not ticker:
             continue
-        _extend_unique(markets, seen, _fetch_series_markets(str(ticker), limit=limit), limit=limit)
+        try:
+            rows = _fetch_series_markets(str(ticker), limit=min(max(limit, 10), 20))
+        except ApiError:
+            continue
+        _extend_unique(markets, seen, rows, limit=limit)
+        if len(markets) >= limit:
+            break
+    return markets[:limit]
+
+
+def _fetch_sports_markets_for_tag(tag: str, query_tokens: set[str], limit: int) -> list[Market]:
+    series_rows = get_json(
+        f"{BASE_URL}/series",
+        {
+            "category": "Sports",
+            "tags": tag,
+            "include_volume": "true",
+        },
+    )
+    series = series_rows.get("series", []) if isinstance(series_rows, dict) else []
+    markets: list[Market] = []
+    seen: set[str] = set()
+    seeded = set(_seed_sports_series(tag, query_tokens))
+    for ticker in _ranked_sports_series(tag, query_tokens, series if isinstance(series, list) else []):
+        try:
+            page_limit = 50 if ticker in seeded else min(max(limit, 10), 20)
+            rows = _fetch_series_markets(str(ticker), limit=page_limit)
+        except ApiError:
+            continue
+        matching = [
+            market
+            for market in rows
+            if _sports_query_matches(query_tokens, market)
+        ]
+        _extend_unique(markets, seen, matching, limit=limit)
         if len(markets) >= limit:
             break
     return markets[:limit]
@@ -94,7 +136,7 @@ def _fetch_series_markets(series_ticker: str, limit: int) -> list[Market]:
         }
         if cursor:
             params["cursor"] = cursor
-        data = get_json(f"{BASE_URL}/markets", params)
+        data = get_json(f"{BASE_URL}/markets", params, timeout=8.0, retries=0)
         rows = data.get("markets", []) if isinstance(data, dict) else []
         if not rows:
             break
@@ -146,7 +188,7 @@ def _normalize_market(row: dict) -> Market:
         market_id=ticker,
         title=title,
         url=f"https://kalshi.com/markets/{ticker.lower()}" if ticker else None,
-        close_time=row.get("close_time") or row.get("expected_expiration_time") or row.get("expiration_time"),
+        close_time=row.get("expected_expiration_time") or row.get("close_time") or row.get("expiration_time"),
         volume=_float(row.get("volume_24h_fp") or row.get("volume_fp")),
         liquidity=_float(row.get("liquidity_dollars")),
         top=TopOfBook(yes_bid=yes_bid, yes_ask=yes_ask, no_bid=no_bid, no_ask=no_ask),
@@ -209,6 +251,70 @@ def _query_tags(tokens: set[str]) -> list[str]:
         "near": "NEAR",
     }
     return [tag for token, tag in mapping.items() if token in tokens]
+
+
+def _query_sports_tags(tokens: set[str]) -> list[str]:
+    mapping = {
+        "soccer": "Soccer",
+        "football": "Football",
+        "tennis": "Tennis",
+        "esports": "Esports",
+        "lol": "Esports",
+        "league": "Esports",
+        "baseball": "Baseball",
+        "mlb": "Baseball",
+        "world": "Soccer",
+        "cup": "Soccer",
+        "wimbledon": "Tennis",
+    }
+    return [tag for token, tag in mapping.items() if token in tokens]
+
+
+def _ranked_sports_series(tag: str, query_tokens: set[str], series: list[object]) -> list[str]:
+    ranked: list[tuple[int, int, str]] = []
+    for index, row in enumerate(series):
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or "")
+        if not ticker:
+            continue
+        text_tokens = _tokens(" ".join(str(row.get(key) or "") for key in ("ticker", "title", "category", "frequency")))
+        overlap = len(query_tokens & text_tokens)
+        ranked.append((-overlap, index, ticker))
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for ticker in _seed_sports_series(tag, query_tokens):
+        if ticker not in seen:
+            seen.add(ticker)
+            ordered.append(ticker)
+    for _, _, ticker in sorted(ranked)[:8]:
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        ordered.append(ticker)
+    return ordered
+
+
+def _seed_sports_series(tag: str, tokens: set[str]) -> list[str]:
+    if tag == "Soccer" and {"world", "cup"} <= tokens:
+        return ["KXWCADVANCE", "KXWCGAME", "KXWCSPREAD", "KXWCMATCHUP"]
+    if tag == "Tennis":
+        return ["KXATPMATCH", "KXWTAMATCH", "KXITFMATCH", "KXITFWMATCH", "KXATPGAME"]
+    if tag == "Esports":
+        return ["KXLOLGAMES", "KXLOLGAME", "KXCS2GAME", "KXCSGOGAME", "KXDOTA2GAME", "KXVALORANTGAME"]
+    if tag == "Baseball":
+        return ["KXMLBGAME", "KXMLBSPREAD", "KXMLBTOTAL"]
+    return []
+
+
+def _sports_query_matches(query_tokens: set[str], market: Market) -> bool:
+    text_tokens = _tokens(_search_text(market))
+    meaningful = query_tokens - {"world", "cup", "soccer", "football", "tennis", "esports", "baseball", "mlb", "wimbledon"}
+    if not meaningful:
+        return bool(query_tokens & text_tokens)
+    overlap = meaningful & text_tokens
+    return len(overlap) >= min(2, len(meaningful))
 
 
 def _probability(value: object) -> float | None:

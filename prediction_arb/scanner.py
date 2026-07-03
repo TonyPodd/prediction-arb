@@ -36,6 +36,7 @@ def _has_structural_mismatch(details: MatchDetails) -> bool:
         "threshold_differs",
         "interval_differs",
         "deadline_differs",
+        "outcome_subject_differs",
     }
     return bool(hard_warnings & set(details.warnings))
 

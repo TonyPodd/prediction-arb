@@ -966,6 +966,7 @@ def _review_inline_keyboard(review_id: str) -> dict[str, object]:
 def _translate_risk_reason(value: str) -> str:
     return {
         "hard_structural_warning": "жесткое структурное предупреждение",
+        "outcome_subject_differs": "исходы относятся к разным командам",
         "price_source_differs": "разный источник цены",
         "price_pair_differs": "разная ценовая пара",
         "low_match_score": "слабое совпадение текста",
@@ -1121,6 +1122,7 @@ def _has_hard_warnings(warnings: list[str]) -> bool:
             "threshold_differs",
             "interval_differs",
             "deadline_differs",
+            "outcome_subject_differs",
         }
         & set(warnings)
     )

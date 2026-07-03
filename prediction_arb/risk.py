@@ -12,6 +12,7 @@ HARD_MATCH_WARNINGS = {
     "threshold_differs",
     "interval_differs",
     "deadline_differs",
+    "outcome_subject_differs",
 }
 
 

@@ -994,6 +994,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         profit_below_min: "прибыль ниже минимума",
         profit_below_threshold: "прибыль ниже порога",
         orderbook_unavailable: "стакан недоступен",
+        outcome_subject_differs: "исходы относятся к разным командам",
       };
       return map[value] || value;
     }
@@ -1005,6 +1006,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     function translateRiskReason(value) {
       const map = {
         hard_structural_warning: "жесткое структурное предупреждение",
+        outcome_subject_differs: "исходы относятся к разным командам",
         price_source_differs: "разный источник цены",
         price_pair_differs: "разная пара цены",
         low_match_score: "слабый матч текста",

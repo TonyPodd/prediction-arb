@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
 
 from prediction_arb.matching import MatchDetails, market_match_details
@@ -316,7 +318,10 @@ def _pair_depth_opportunities(
         buy_quote = quote_execution(buy_book, "BUY", size, allow_partial=allow_partial)
         sell_quote = quote_execution(sell_book, "SELL", size, allow_partial=allow_partial)
         rejection_reason = None
-        if not allow_partial and (not buy_quote.complete or not sell_quote.complete):
+        subject_warning = _outcome_subject_warning(buy_market, buy_book.outcome, sell_market, sell_book.outcome)
+        if subject_warning:
+            rejection_reason = subject_warning
+        elif not allow_partial and (not buy_quote.complete or not sell_quote.complete):
             rejection_reason = "incomplete_fill"
         elif not buy_quote.avg_price or not sell_quote.avg_price:
             rejection_reason = "missing_executable_price"
@@ -350,6 +355,9 @@ def _pair_depth_opportunities(
         if rejection_reason and not include_filtered:
             continue
 
+        match_warnings = list(details.warnings)
+        if subject_warning:
+            match_warnings.append(subject_warning)
         rows.append(
             DepthCandidate(
                 outcome=outcome,
@@ -370,13 +378,68 @@ def _pair_depth_opportunities(
                 buy_quote=buy_quote,
                 sell_quote=sell_quote,
                 match_score=details.score,
-                match_warnings=details.warnings,
+                match_warnings=match_warnings,
                 buy_url=buy_market.url,
                 sell_url=sell_market.url,
                 detected_at=detected_at,
             )
         )
     return rows
+
+
+def _outcome_subject_warning(left: Market, left_outcome: str, right: Market, right_outcome: str) -> str | None:
+    left_subject = _outcome_subject(left, left_outcome)
+    right_subject = _outcome_subject(right, right_outcome)
+    if left_subject and right_subject and left_subject != right_subject:
+        return "outcome_subject_differs"
+    return None
+
+
+def _outcome_subject(market: Market, outcome: str) -> str | None:
+    if market.source == "polymarket":
+        outcomes = _raw_list(market.raw.get("outcomes"))
+        if len(outcomes) >= 2:
+            index = 0 if outcome == "YES" else 1
+            return _normalize_subject(str(outcomes[index]))
+        return None
+    if market.source == "kalshi":
+        yes_subject = _normalize_subject(str(market.raw.get("yes_sub_title") or ""))
+        if not yes_subject:
+            yes_subject = _subject_from_kalshi_ticker(market.market_id)
+        if outcome == "YES":
+            return yes_subject
+        return f"not:{yes_subject}" if yes_subject else None
+    return None
+
+
+def _raw_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _subject_from_kalshi_ticker(value: str) -> str | None:
+    suffix = value.rsplit("-", 1)[-1].lower()
+    if suffix in {"arg", "usa", "mex", "eng", "por", "esp", "bel"}:
+        return suffix
+    return None
+
+
+def _normalize_subject(value: str) -> str | None:
+    normalized = value.lower()
+    normalized = re.sub(r"^reg\s*time:\s*", "", normalized)
+    normalized = re.sub(r"\b(advances?|wins?|winner|team|to|the|match|game)\b", " ", normalized)
+    normalized = normalized.replace("cabo verde", "cape verde")
+    tokens = [token for token in re.findall(r"[a-z0-9]+", normalized) if len(token) > 1]
+    if not tokens or tokens in (["yes"], ["no"]):
+        return None
+    return " ".join(tokens)
 
 
 def _matching_pairs(

@@ -54,7 +54,7 @@ class KalshiTests(unittest.TestCase):
         self.assertAlmostEqual(no_book.asks[0].price, 0.59)
 
     def test_search_markets_uses_crypto_series_tags(self) -> None:
-        def fake_get_json(url: str, params: dict) -> dict:
+        def fake_get_json(url: str, params: dict, **kwargs) -> dict:
             if url.endswith("/series"):
                 self.assertEqual(params["category"], "Crypto")
                 self.assertEqual(params["tags"], "BTC")
@@ -82,6 +82,41 @@ class KalshiTests(unittest.TestCase):
             rows = kalshi.search_markets("bitcoin", limit=5)
 
         self.assertEqual([row.market_id for row in rows], ["KXBTC-1"])
+
+    def test_search_markets_uses_sports_series_tags_and_filters_titles(self) -> None:
+        def fake_get_json(url: str, params: dict, **kwargs) -> dict:
+            if url.endswith("/series"):
+                self.assertEqual(params["category"], "Sports")
+                self.assertEqual(params["tags"], "Soccer")
+                return {"series": [{"ticker": "KXWCADVANCE"}]}
+            if url.endswith("/markets"):
+                return {
+                    "markets": [
+                        {
+                            "ticker": "KXWCADVANCE-ARG",
+                            "title": "Argentina vs Cabo Verde: To Advance",
+                            "market_type": "binary",
+                            "status": "active",
+                            "yes_bid_dollars": "0.7200",
+                            "yes_ask_dollars": "0.7500",
+                        },
+                        {
+                            "ticker": "KXWCADVANCE-USA",
+                            "title": "USA vs Belgium: To Advance",
+                            "market_type": "binary",
+                            "status": "active",
+                            "yes_bid_dollars": "0.4200",
+                            "yes_ask_dollars": "0.4500",
+                        },
+                    ],
+                    "cursor": "",
+                }
+            raise AssertionError(url)
+
+        with patch("prediction_arb.sources.kalshi.get_json", side_effect=fake_get_json):
+            rows = kalshi.search_markets("world cup argentina cabo verde", limit=5)
+
+        self.assertEqual([row.market_id for row in rows], ["KXWCADVANCE-ARG"])
 
 
 if __name__ == "__main__":

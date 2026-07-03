@@ -196,14 +196,20 @@ def _condition_kind(value: str) -> str:
         return "directional_up_down"
     if re.search(r"\b(above|below|over|under)\s+\$?[0-9]", normalized):
         return "threshold"
-    if re.search(r"\b(before|by|by end of)\b", normalized):
-        return "deadline_yes_no"
     if re.search(r"\bprice\s+range\b", normalized):
         return "price_range"
     if "win the" in normalized and ("world cup" in normalized or "championship" in normalized):
         return "outright_winner"
     if re.search(r"\bwin on \d{4}-\d{2}-\d{2}\b", normalized):
-        return "dated_match_winner"
+        return "match_winner"
+    if re.search(r"\bwill .+ win\b", normalized) and re.search(r"\b(match|game|vs\.?|versus)\b", normalized):
+        return "match_winner"
+    if re.search(r"\bteam to advance\b|\bto advance\b", normalized):
+        return "match_winner"
+    if re.search(r"\bwinner\??\b", normalized) and re.search(r"\bvs\.?|\bversus\b", normalized):
+        return "match_winner"
+    if re.search(r"\b(before|by|by end of)\b", normalized):
+        return "deadline_yes_no"
     if re.search(r"\bnext\b", normalized):
         return "next_holder"
     return "unknown"
@@ -225,9 +231,31 @@ def _condition_warnings(left: Condition, right: Condition) -> list[str]:
         warnings.append("price_source_differs")
     if left.price_pair and right.price_pair and left.price_pair != right.price_pair:
         warnings.append("price_pair_differs")
-    if left.deadline and right.deadline and left.deadline != right.deadline:
+    if left.deadline and right.deadline and left.deadline != right.deadline and not _compatible_deadlines(left, right):
         warnings.append("deadline_differs")
     return warnings
+
+
+def _compatible_deadlines(left: Condition, right: Condition) -> bool:
+    if left.kind != "match_winner" or right.kind != "match_winner":
+        return False
+    left_dt = _deadline_datetime(left.deadline)
+    right_dt = _deadline_datetime(right.deadline)
+    if left_dt is None or right_dt is None:
+        return False
+    return abs((left_dt - right_dt).total_seconds()) <= 6 * 60 * 60
+
+
+def _deadline_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _condition_from_kalshi(market: Market) -> Condition | None:
@@ -311,6 +339,8 @@ def _direction(value: str, kind: str) -> str | None:
         return "up_or_down"
     if kind == "deadline_yes_no":
         return "yes_by_deadline"
+    if kind == "match_winner":
+        return "yes_to_win"
     if re.search(r"\b(above|over|greater than|higher than)\b", normalized):
         return "above"
     if re.search(r"\b(below|under|less than|lower than)\b", normalized):

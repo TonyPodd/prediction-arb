@@ -268,6 +268,50 @@ class DepthCandidateTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertEqual(rows[0].rejection_reason, "profit_below_threshold")
 
+    def test_outcome_subject_mismatch_filters_sports_false_edge(self) -> None:
+        kalshi_cape_verde = Market(
+            source="kalshi",
+            market_id="KXWCADVANCE-26JUL03ARGCPV-CPV",
+            title="Argentina vs Cape Verde: To Advance",
+            url=None,
+            close_time="2026-07-04T01:00:00Z",
+            volume=None,
+            liquidity=None,
+            top=TopOfBook(yes_bid=0.07, yes_ask=0.08),
+            raw={"yes_sub_title": "Cape Verde advances"},
+        )
+        polymarket = Market(
+            source="polymarket",
+            market_id="2721765",
+            title="Argentina vs. Cabo Verde: Team to Advance",
+            url=None,
+            close_time="2026-07-03T22:00:00Z",
+            volume=None,
+            liquidity=None,
+            top=TopOfBook(yes_bid=0.93, yes_ask=0.94),
+            raw={"outcomes": '["Argentina", "Cabo Verde"]', "feesEnabled": False},
+        )
+        books = {
+            ("kalshi", "YES"): OrderBook("kalshi", "k", "YES", bids=[OrderLevel(0.07, 100)], asks=[OrderLevel(0.08, 100)]),
+            ("polymarket", "YES"): OrderBook("polymarket", "p", "YES", bids=[OrderLevel(0.93, 100)], asks=[OrderLevel(0.94, 100)]),
+            ("kalshi", "NO"): OrderBook("kalshi", "k-no", "NO", bids=[], asks=[]),
+            ("polymarket", "NO"): OrderBook("polymarket", "p-no", "NO", bids=[], asks=[]),
+        }
+
+        with patch("prediction_arb.depth._fetch_book", side_effect=lambda market, outcome: books[(market.source, outcome)]):
+            rows = scan_depth_candidates(
+                [kalshi_cape_verde],
+                [polymarket],
+                size=10,
+                min_net_edge=0.01,
+                safety_buffer=0,
+                include_filtered=True,
+            )
+
+        self.assertTrue(rows)
+        self.assertEqual(rows[0].rejection_reason, "outcome_subject_differs")
+        self.assertIn("outcome_subject_differs", rows[0].match_warnings)
+
     def test_geometric_sizes_include_max(self) -> None:
         self.assertEqual(_geometric_sizes(10, 100, 2), [10.0, 20.0, 40.0, 80.0, 100.0])
 

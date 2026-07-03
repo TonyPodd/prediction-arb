@@ -201,6 +201,27 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(parsed.direction, "up_or_down")
         self.assertEqual(parsed.interval_minutes, 15)
 
+    def test_match_winner_kind_for_sports_markets(self) -> None:
+        left = market("kalshi", "Will Argentina win the Argentina vs Cabo Verde match?", "2026-07-03T22:00:00Z")
+        right = market("polymarket", "Will Argentina win on 2026-07-03?", "2026-07-03T22:00:00Z")
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.kind, "match_winner")
+        self.assertEqual(details.right_condition.kind, "match_winner")
+        self.assertNotIn("condition_kind_differs", details.warnings)
+
+    def test_team_to_advance_is_match_winner_with_relaxed_close_time(self) -> None:
+        left = market("kalshi", "Argentina vs Cape Verde: To Advance", "2026-07-04T01:00:00Z")
+        right = market("polymarket", "Argentina vs. Cabo Verde: Team to Advance", "2026-07-03T22:00:00Z")
+
+        details = market_match_details(left, right)
+
+        self.assertEqual(details.left_condition.kind, "match_winner")
+        self.assertEqual(details.right_condition.kind, "match_winner")
+        self.assertNotIn("condition_kind_differs", details.warnings)
+        self.assertNotIn("deadline_differs", details.warnings)
+
 
 if __name__ == "__main__":
     unittest.main()
