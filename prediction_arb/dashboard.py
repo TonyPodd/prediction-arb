@@ -1011,6 +1011,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         price_pair_differs: "разная пара цены",
         low_match_score: "слабый матч текста",
         medium_match_score: "средний матч текста",
+        sports_competition_terms_uncertain: "спортивные условия отличаются",
         high_net_edge: "высокая доходность",
         very_high_net_edge: "очень высокая доходность",
         extreme_net_edge: "аномальная доходность",
@@ -1019,6 +1020,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
         fee_model_uncertain: "комиссии оценены неуверенно",
         limitless_fee_curve_unknown: "неизвестная кривая комиссии Limitless",
         kalshi_fee_model_not_implemented_use_manual_fee_bps: "Kalshi: комиссия через ручной запас",
+        kalshi_fee_model_uncertain: "Kalshi: комиссия оценена неуверенно",
         low_manual_fee_buffer: "низкий ручной запас комиссии",
         filtered_candidate: "кандидат был отфильтрован",
       };

@@ -5,6 +5,9 @@ from hashlib import sha256
 
 
 SOFT_MATCH_WARNINGS = {"price_source_differs", "price_pair_differs"}
+REVIEW_MATCH_WARNINGS = {
+    "competition_terms_only_on_one_side",
+}
 HARD_MATCH_WARNINGS = {
     "condition_kind_differs",
     "asset_differs",
@@ -23,7 +26,6 @@ def candidate_review_id(candidate: object) -> str:
         str(getattr(candidate, "buy_market_id", "")),
         str(getattr(candidate, "sell_source", "")),
         str(getattr(candidate, "sell_market_id", "")),
-        str(getattr(candidate, "detected_at", "")),
     ]
     return sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
@@ -43,6 +45,9 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
     if "price_pair_differs" in warnings:
         score += 15
         reasons.append("price_pair_differs")
+    if warnings & REVIEW_MATCH_WARNINGS:
+        score += 10
+        reasons.append("sports_competition_terms_uncertain")
 
     match_score = _float(getattr(candidate, "match_score", None), 1.0)
     if match_score < 0.35:
@@ -71,9 +76,12 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
     if getattr(candidate, "fee_estimate", None) is None:
         score += 10
         reasons.append("fee_estimate_missing")
-    if any("unknown" in note or "no_fee_field" in note for note in fee_notes):
+    if any("unknown" in note or "no_fee_field" in note or note == "manual_fee_buffer_missing" for note in fee_notes):
         score += 20
         reasons.append("fee_model_uncertain")
+    if any(note == "kalshi_fee_model_not_implemented_use_manual_fee_bps" for note in fee_notes):
+        score += 10
+        reasons.append("kalshi_fee_model_uncertain")
     if any(note == "limitless_fee_curve_unknown_use_manual_fee_bps" for note in fee_notes):
         score += 10
         reasons.append("limitless_fee_curve_unknown")
@@ -95,7 +103,7 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
         "review_id": candidate_review_id(candidate),
         "risk_score": score,
         "risk_level": level,
-        "manual_review": score >= 25 or bool(warnings & SOFT_MATCH_WARNINGS),
+        "manual_review": score >= 25 or bool(warnings & (SOFT_MATCH_WARNINGS | REVIEW_MATCH_WARNINGS)),
         "reasons": reasons,
         "match_warnings": sorted(warnings),
         "components": risk_components(candidate),

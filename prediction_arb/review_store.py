@@ -28,6 +28,10 @@ def append_review_candidates(candidates: list[object], path: Path = DEFAULT_REVI
     records = [build_review_record(candidate, source=source) for candidate in candidates]
     if not records:
         return []
+    existing_ids = {str(row.get("review_id") or "") for row in _read_jsonl(path)}
+    records = [record for record in records if str(record.get("review_id") or "") not in existing_ids]
+    if not records:
+        return []
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         for record in records:
