@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
+from prediction_arb.cache import cached_markets
 from prediction_arb.capital import parse_balances, parse_inventory, plan_capital
 from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.dashboard import serve_dashboard
@@ -20,6 +21,7 @@ from prediction_arb.monitor import _opportunity_key, build_telegram_payload, bui
 from prediction_arb.near import append_near_opportunities, select_near_opportunities
 from prediction_arb.paper import paper_enter_from_monitor, paper_mark_close, paper_sync_from_monitor, run_paper_loop
 from prediction_arb.portfolio import initialize_portfolio, load_portfolio, portfolio_summary
+from prediction_arb.query_diagnostics import build_query_diagnostic
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.research import DEFAULT_RESEARCH_FILE, build_research_snapshot
 from prediction_arb.review_analysis import summarize_review_quality
@@ -89,6 +91,7 @@ def main() -> None:
     coverage_parser.add_argument("--min-close-minutes", type=float)
     coverage_parser.add_argument("--max-close-hours", type=float)
     coverage_parser.add_argument("--examples", type=int, default=8)
+    coverage_parser.add_argument("--cache-ttl", type=float, default=300.0)
     coverage_parser.add_argument("--output", type=Path)
 
     health_parser = subparsers.add_parser("health", help="Diagnose source coverage, matching funnel, depth, fees, and operational costs.")
@@ -108,6 +111,7 @@ def main() -> None:
     health_parser.add_argument("--max-depth-pairs", type=int, default=40)
     health_parser.add_argument("--min-close-minutes", type=float)
     health_parser.add_argument("--max-close-hours", type=float, default=24.0)
+    health_parser.add_argument("--cache-ttl", type=float, default=300.0)
     health_parser.add_argument("--output", type=Path)
 
     depth_parser = subparsers.add_parser("depth-scan", help="Scan executable edge using orderbook depth.")
@@ -141,6 +145,7 @@ def main() -> None:
     near_parser.add_argument("--min-match-score", type=float, default=0.25)
     near_parser.add_argument("--min-close-minutes", type=float)
     near_parser.add_argument("--max-close-hours", type=float)
+    near_parser.add_argument("--cache-ttl", type=float, default=300.0)
     near_parser.add_argument("--top", type=int, default=20)
     near_parser.add_argument("--output", type=Path)
 
@@ -161,6 +166,7 @@ def main() -> None:
     near_opps_parser.add_argument("--min-close-minutes", type=float)
     near_opps_parser.add_argument("--max-close-hours", type=float, default=24.0)
     near_opps_parser.add_argument("--near-min-edge", type=float, default=0.0)
+    near_opps_parser.add_argument("--cache-ttl", type=float, default=300.0)
     near_opps_parser.add_argument("--top", type=int, default=20)
     near_opps_parser.add_argument("--save", action="store_true")
     near_opps_parser.add_argument("--near-output", type=Path, default=Path("data/near-opportunities.jsonl"))
@@ -217,6 +223,8 @@ def main() -> None:
     monitor_parser.add_argument("--max-depth-pairs", type=int, default=40, help="Maximum structurally compatible pairs to fetch orderbooks for per iteration. 0 means no limit.")
     monitor_parser.add_argument("--min-close-minutes", type=float)
     monitor_parser.add_argument("--max-close-hours", type=float)
+    monitor_parser.add_argument("--cache-ttl", type=float, default=600.0)
+    monitor_parser.add_argument("--rotate-queries", action="store_true", help="Scan one expanded query per iteration, rotating through --query/--preset.")
     monitor_parser.add_argument("--output", type=Path, default=Path("data/monitor.jsonl"))
     monitor_parser.add_argument("--print-snapshots", action="store_true")
     monitor_parser.add_argument("--alert-new", action="store_true", help="Print a compact alert when new opportunities appear.")
@@ -249,12 +257,33 @@ def main() -> None:
     research_parser.add_argument("--min-close-minutes", type=float)
     research_parser.add_argument("--max-close-hours", type=float, default=168.0)
     research_parser.add_argument("--near-min-edge", type=float, default=0.0)
+    research_parser.add_argument("--cache-ttl", type=float, default=600.0)
+    research_parser.add_argument("--rotate-queries", action="store_true")
     research_parser.add_argument("--top", type=int, default=30)
     research_parser.add_argument("--max-depth-pairs", type=int, default=40, help="Maximum structurally compatible pairs to fetch orderbooks for per iteration. 0 means no limit.")
     research_parser.add_argument("--output", type=Path, default=DEFAULT_RESEARCH_FILE)
     research_parser.add_argument("--near-output", type=Path, default=Path("data/near-opportunities.jsonl"))
     research_parser.add_argument("--print-snapshots", action="store_true")
     research_parser.add_argument("--stop-on-error", action="store_true")
+
+    query_diag_parser = subparsers.add_parser("query-diagnostics", help="Persist per-query search/matching/depth diagnostics.")
+    query_diag_parser.add_argument("--query", action="append", default=[])
+    query_diag_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
+    query_diag_parser.add_argument("--limit", type=int, default=200)
+    query_diag_parser.add_argument("--size", type=float, default=25.0)
+    query_diag_parser.add_argument("--interval", type=float, default=900.0)
+    query_diag_parser.add_argument("--iterations", type=int, default=1, help="0 means run until interrupted.")
+    query_diag_parser.add_argument("--rotate-queries", action="store_true")
+    query_diag_parser.add_argument("--min-net-edge", type=float, default=0.005)
+    query_diag_parser.add_argument("--min-profit", type=float, default=1.0)
+    query_diag_parser.add_argument("--safety-buffer", type=float, default=0.002)
+    query_diag_parser.add_argument("--fee-bps", type=float, default=50.0)
+    query_diag_parser.add_argument("--route-fixed-cost", default="*=2")
+    query_diag_parser.add_argument("--route-cost-bps", default="*=25")
+    query_diag_parser.add_argument("--min-match-score", type=float, default=0.25)
+    query_diag_parser.add_argument("--max-depth-pairs", type=int, default=4)
+    query_diag_parser.add_argument("--cache-ttl", type=float, default=900.0)
+    query_diag_parser.add_argument("--output", type=Path, default=Path("data/query-diagnostics.jsonl"))
 
     report_parser = subparsers.add_parser("monitor-report", help="Summarize monitor JSONL history.")
     report_parser.add_argument("--input", type=Path, required=True)
@@ -357,6 +386,8 @@ def main() -> None:
         _monitor(args)
     elif args.command == "research-monitor":
         _research_monitor(args)
+    elif args.command == "query-diagnostics":
+        _query_diagnostics(args)
     elif args.command == "monitor-report":
         _monitor_report(args)
     elif args.command == "review-report":
@@ -650,14 +681,14 @@ def _fees(args: argparse.Namespace) -> None:
 
 def _monitor(args: argparse.Namespace) -> None:
     _validate_monitor_scope(args)
-    scope_label = _monitor_scope_label(args)
     previous_keys = _load_monitor_keys(args.output)
     iteration = 0
     try:
         while True:
             iteration += 1
+            scope_label = _monitor_scope_label(args, iteration=iteration)
             try:
-                limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+                limitless_markets, polymarket_markets = _fetch_monitor_universe(args, iteration=iteration)
                 snapshot, previous_keys = monitor_once(
                     query=scope_label,
                     limitless_markets=limitless_markets,
@@ -701,13 +732,13 @@ def _monitor(args: argparse.Namespace) -> None:
 def _research_monitor(args: argparse.Namespace) -> None:
     if not _expanded_queries(args) and not args.category:
         args.all_markets = True
-    scope_label = _monitor_scope_label(args)
     iteration = 0
     try:
         while True:
             iteration += 1
+            scope_label = _monitor_scope_label(args, iteration=iteration)
             try:
-                limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
+                limitless_markets, polymarket_markets = _fetch_monitor_universe(args, iteration=iteration)
                 snapshot = build_research_snapshot(
                     scope=scope_label,
                     limitless_markets=limitless_markets,
@@ -752,6 +783,50 @@ def _research_monitor(args: argparse.Namespace) -> None:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("Research monitor stopped.")
+
+
+def _query_diagnostics(args: argparse.Namespace) -> None:
+    queries = _expanded_queries(args)
+    if not queries:
+        raise ValueError("query-diagnostics requires at least one --query or --preset.")
+
+    iteration = 0
+    try:
+        while True:
+            iteration += 1
+            active_queries = _active_queries_for_iteration(args, iteration)
+            for query in active_queries:
+                kalshi_markets = _fetch_kalshi(args.limit, query, cache_ttl=args.cache_ttl)
+                polymarket_markets = _fetch_polymarket(args.limit, query, cache_ttl=args.cache_ttl)
+                payload = build_query_diagnostic(
+                    query=query,
+                    kalshi_markets=kalshi_markets,
+                    polymarket_markets=polymarket_markets,
+                    size=args.size,
+                    min_match_score=args.min_match_score,
+                    min_net_edge=args.min_net_edge,
+                    min_profit=args.min_profit,
+                    safety_buffer=args.safety_buffer,
+                    fee_bps=args.fee_bps,
+                    route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
+                    route_cost_bps=_parse_cost_map(args.route_cost_bps),
+                    max_depth_pairs=args.max_depth_pairs,
+                )
+                _append_jsonl(payload, args.output)
+                matching = payload.get("matching", {}) if isinstance(payload.get("matching"), dict) else {}
+                full_costs = payload.get("full_costs", {}) if isinstance(payload.get("full_costs"), dict) else {}
+                print(
+                    f"{payload['detected_at']} query={query} "
+                    f"markets={payload['source_counts']} "
+                    f"compatible={matching.get('structurally_compatible_pairs', 0)} "
+                    f"passing={payload.get('passing_count', 0)} "
+                    f"best_full={full_costs.get('best_net_edge')}"
+                )
+            if args.iterations and iteration >= args.iterations:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("Query diagnostics stopped.")
 
 
 def _monitor_report(args: argparse.Namespace) -> None:
@@ -841,11 +916,13 @@ def _monitor_error_payload(query: str, exc: Exception) -> dict:
     }
 
 
-def _monitor_scope_label(args: argparse.Namespace) -> str:
+def _monitor_scope_label(args: argparse.Namespace, *, iteration: int | None = None) -> str:
     parts = []
-    queries = _expanded_queries(args)
+    queries = _active_queries_for_iteration(args, iteration)
     if queries:
         parts.append("query=" + ",".join(queries))
+        if getattr(args, "rotate_queries", False):
+            parts.append("rotating")
     if args.category:
         parts.append("category=" + ",".join(args.category))
     if args.all_markets:
@@ -1041,19 +1118,28 @@ def _filter_markets(markets: list, min_liquidity: float) -> list:
     return [market for market in markets if (market.liquidity or 0.0) >= min_liquidity]
 
 
-def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
-    queries = _expanded_queries(args)
-    kalshi_seed = kalshi.fetch_markets(limit=args.limit) if args.all_markets or not queries else []
-    polymarket_seed = polymarket.fetch_markets_expanded(limit=args.limit) if args.all_markets or not queries else []
+def _fetch_monitor_universe(args: argparse.Namespace, *, iteration: int | None = None) -> tuple[list, list]:
+    queries = _active_queries_for_iteration(args, iteration)
+    cache_ttl = float(getattr(args, "cache_ttl", 0.0) or 0.0)
+    kalshi_seed = (
+        cached_markets(f"kalshi:{args.limit}:all", cache_ttl, lambda: kalshi.fetch_markets(limit=args.limit))
+        if args.all_markets or not queries
+        else []
+    )
+    polymarket_seed = (
+        cached_markets(f"polymarket:{args.limit}:all", cache_ttl, lambda: polymarket.fetch_markets_expanded(limit=args.limit))
+        if args.all_markets or not queries
+        else []
+    )
     kalshi_query = [
         market
         for query in queries
-        for market in _fetch_kalshi(args.limit, query)
+        for market in _fetch_kalshi(args.limit, query, cache_ttl=cache_ttl)
     ]
     polymarket_query = [
         market
         for query in queries
-        for market in _fetch_polymarket(args.limit, query)
+        for market in _fetch_polymarket(args.limit, query, cache_ttl=cache_ttl)
     ]
     kalshi_markets = _dedupe_markets([*kalshi_seed, *kalshi_query])
     polymarket_markets = _dedupe_markets([*polymarket_seed, *polymarket_query])
@@ -1081,6 +1167,14 @@ def _expanded_queries(args: argparse.Namespace) -> list[str]:
         seen.add(key)
         rows.append(normalized)
     return rows
+
+
+def _active_queries_for_iteration(args: argparse.Namespace, iteration: int | None = None) -> list[str]:
+    queries = _expanded_queries(args)
+    if not queries or not getattr(args, "rotate_queries", False):
+        return queries
+    index = max((iteration or 1) - 1, 0) % len(queries)
+    return [queries[index]]
 
 
 def _dedupe_markets(markets: object) -> list:
@@ -1126,16 +1220,23 @@ def _filter_by_close_window(markets: list, min_close_minutes: float | None, max_
     return rows
 
 
-def _fetch_limitless(limit: int, query: str) -> list:
-    return limitless.search_markets(query, limit=limit) if query else limitless.fetch_markets(limit=limit)
+def _fetch_limitless(limit: int, query: str, *, cache_ttl: float = 0.0) -> list:
+    key = f"limitless:{limit}:{query or 'all'}"
+    return cached_markets(key, cache_ttl, lambda: limitless.search_markets(query, limit=limit) if query else limitless.fetch_markets(limit=limit))
 
 
-def _fetch_kalshi(limit: int, query: str) -> list:
-    return kalshi.search_markets(query, limit=limit) if query else kalshi.fetch_markets(limit=limit)
+def _fetch_kalshi(limit: int, query: str, *, cache_ttl: float = 0.0) -> list:
+    key = f"kalshi:{limit}:{query or 'all'}"
+    return cached_markets(key, cache_ttl, lambda: kalshi.search_markets(query, limit=limit) if query else kalshi.fetch_markets(limit=limit))
 
 
-def _fetch_polymarket(limit: int, query: str) -> list:
-    return polymarket.search_markets(query, limit=limit) if query else polymarket.fetch_markets_expanded(limit=limit)
+def _fetch_polymarket(limit: int, query: str, *, cache_ttl: float = 0.0) -> list:
+    key = f"polymarket:{limit}:{query or 'all'}"
+    return cached_markets(
+        key,
+        cache_ttl,
+        lambda: polymarket.search_markets(query, limit=limit) if query else polymarket.fetch_markets_expanded(limit=limit),
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:

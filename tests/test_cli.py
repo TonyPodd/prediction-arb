@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from argparse import Namespace
 
-from prediction_arb.cli import _expanded_queries, _fetch_monitor_universe, _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
+from prediction_arb.cli import _active_queries_for_iteration, _expanded_queries, _fetch_monitor_universe, _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _monitor_scope_label, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
 from prediction_arb.models import Market, TopOfBook
 
 
@@ -97,6 +97,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rows.count("btc"), 1)
         self.assertIn("world cup", rows)
         self.assertIn("lol esports", rows)
+
+    def test_active_queries_rotate_one_query_per_iteration(self) -> None:
+        args = Namespace(query=["btc", "eth"], preset=[], rotate_queries=True)
+
+        self.assertEqual(_active_queries_for_iteration(args, 1), ["btc"])
+        self.assertEqual(_active_queries_for_iteration(args, 2), ["eth"])
+        self.assertEqual(_active_queries_for_iteration(args, 3), ["btc"])
+
+    def test_monitor_scope_label_marks_rotating_query(self) -> None:
+        args = Namespace(query=["btc", "eth"], preset=[], rotate_queries=True, category=[], all_markets=False, max_close_hours=24)
+
+        label = _monitor_scope_label(args, iteration=2)
+
+        self.assertIn("query=eth", label)
+        self.assertIn("rotating", label)
 
     def test_near_miss_sort_key_prefers_net_edge(self) -> None:
         weak = Namespace(net_edge=0.01, depth_edge=0.2, top_of_book_edge=0.3, match_score=0.9)

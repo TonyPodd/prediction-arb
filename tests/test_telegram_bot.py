@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -157,6 +158,51 @@ class TelegramBotTests(unittest.TestCase):
 
         self.assertIn("доходность=", text or "")
         self.assertIn("прибыль=", text or "")
+
+    def test_digest_command_includes_query_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                data = Path("data")
+                data.mkdir()
+                monitor = data / "monitor.jsonl"
+                monitor.write_text(
+                    json.dumps(
+                        {
+                            "detected_at": "2026-07-01T00:00:00+00:00",
+                            "opportunity_count": 0,
+                            "new_count": 0,
+                            "gone_count": 0,
+                            "active_keys": [],
+                            "opportunities": [],
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (data / "query-diagnostics.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "type": "query_diagnostic",
+                            "query": "btc",
+                            "source_counts": {"kalshi": 2, "polymarket": 3},
+                            "matching": {"structurally_compatible_pairs": 1},
+                            "full_costs": {"best_net_edge": 0.01},
+                            "passing_count": 0,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                text = handle_bot_command("Дайджест", monitor)
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertIn("Дайджест prediction-arb", text or "")
+        self.assertIn("btc", text or "")
+        self.assertIn("совместимых_пар=1", text or "")
 
 
 if __name__ == "__main__":

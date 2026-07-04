@@ -11,6 +11,7 @@ from prediction_arb.depth import scan_depth_candidates
 from prediction_arb.diagnostics import build_health_report
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
+from prediction_arb.query_diagnostics import latest_by_query
 from prediction_arb.reporting import latest_opportunities, read_monitor_history, summarize_monitor_history
 from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
@@ -56,6 +57,11 @@ def _handler(default_input: Path):
                     path = _safe_monitor_path(query.get("input", ["data/research-kalshi-poly.jsonl"])[0])
                     limit = _int(query.get("limit", ["50"])[0], default=50)
                     self._send_json(_read_jsonl(path)[-limit:])
+                    return
+                if parsed.path == "/api/query-diagnostics":
+                    query = parse_qs(parsed.query)
+                    path = _safe_monitor_path(query.get("input", ["data/query-diagnostics.jsonl"])[0])
+                    self._send_json(latest_by_query(_read_jsonl(path)))
                     return
                 if parsed.path == "/api/capital":
                     query = parse_qs(parsed.query)
@@ -418,6 +424,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       <button class="tab" data-view="portfolio">Бумажный портфель</button>
       <button class="tab" data-view="coverage">Покрытие источников</button>
       <button class="tab" data-view="health">Диагностика</button>
+      <button class="tab" data-view="search">Поиск</button>
       <button class="tab" data-view="research">Research 7d</button>
       <button class="tab" data-view="events">События</button>
     </div>
@@ -637,10 +644,36 @@ _DASHBOARD_HTML = r"""<!doctype html>
       </div>
       <div class="panel"><h2>Research события</h2><div class="events" id="researchEvents"></div></div>
     </section>
+
+    <section class="view" id="search">
+      <div class="panel">
+        <h2>Диагностика поиска по запросам</h2>
+        <div class="planner">
+          <label><div class="label">Файл диагностики</div><input id="queryDiagPath" value="data/query-diagnostics.jsonl"></label>
+          <button class="primary" id="queryDiagRefreshBtn">Обновить поиск</button>
+        </div>
+        <div class="explain">
+          <div>Эта вкладка показывает не сделки, а воронку поиска: сколько рынков нашлось по каждому запросу, сколько пар прошли текстовый и структурный matcher, и где candidates отваливаются после комиссий и operational costs.</div>
+          <div>Если здесь есть рынки и совместимые пары, но “проходящих” нет, значит проблема обычно в стаканах, комиссиях, fixed costs или минимальной прибыли. Если совместимых пар ноль, надо расширять/чинить matcher или список запросов.</div>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Запросов</div><div class="value" id="queryDiagCount">0</div></div>
+        <div class="metric"><div class="label">Kalshi рынков</div><div class="value" id="queryDiagKalshi">0</div></div>
+        <div class="metric"><div class="label">Polymarket рынков</div><div class="value" id="queryDiagPolymarket">0</div></div>
+        <div class="metric"><div class="label">Совместимых пар</div><div class="value" id="queryDiagCompatible">0</div></div>
+        <div class="metric"><div class="label">Проходящих legs</div><div class="value ok" id="queryDiagPassing">0</div></div>
+        <div class="metric"><div class="label">Лучший full edge</div><div class="value ok" id="queryDiagBest">0%</div></div>
+      </div>
+      <div class="panel">
+        <h2>Воронка по запросам</h2>
+        <table><thead><tr><th>Запрос</th><th>Рынки K/P</th><th>Матчинг</th><th>No costs</th><th>Full costs</th><th>Причины отказов</th><th>Обновлено</th></tr></thead><tbody id="queryDiagTable"></tbody></table>
+      </div>
+    </section>
   </main>
 
   <script>
-    const state = { input: "data/monitor-kalshi-poly.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, research: [], review: [], reviewReport: null, near: [] };
+    const state = { input: "data/monitor-kalshi-poly.jsonl", report: null, snapshots: [], plan: null, portfolio: null, coverage: null, health: null, research: [], queryDiagnostics: [], review: [], reviewReport: null, near: [] };
     const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
     const money = v => "$" + fmt.format(v || 0);
     const pct = v => ((v || 0) * 100).toFixed(2) + "%";
@@ -677,6 +710,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       await refreshPortfolio();
       await refreshReview();
       await refreshResearch();
+      await refreshQueryDiagnostics();
       if (!state.coverage) await refreshCoverage();
       if (!state.health) await refreshHealth();
       render();
@@ -711,6 +745,11 @@ _DASHBOARD_HTML = r"""<!doctype html>
     async function refreshResearch() {
       const path = encodeURIComponent(el("researchPath").value || "data/research-kalshi-poly.jsonl");
       state.research = await json(`/api/research?input=${path}&limit=80`);
+    }
+
+    async function refreshQueryDiagnostics() {
+      const path = encodeURIComponent(el("queryDiagPath").value || "data/query-diagnostics.jsonl");
+      state.queryDiagnostics = await json(`/api/query-diagnostics?input=${path}`);
     }
 
     async function refreshReview() {
@@ -768,6 +807,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       renderCoverage(state.coverage || {});
       renderHealth(state.health || {});
       renderResearch(state.research || []);
+      renderQueryDiagnostics(state.queryDiagnostics || []);
       renderReview(state.review || []);
       renderReviewReport(state.reviewReport || {});
       renderNear(state.near || []);
@@ -887,6 +927,36 @@ _DASHBOARD_HTML = r"""<!doctype html>
         if (row.type === "research_error") return `<div class="event error"><strong class="bad">Research ошибка</strong><br><span class="muted">${row.detected_at || ""}</span><br>${escapeHtml(row.error || "")}</div>`;
         return `<div class="event"><strong>${row.near_count || 0} near</strong> / ${row.candidate_count || 0} candidates<br><span class="muted">${row.detected_at || ""}</span><br><span class="muted">${escapeHtml(row.scope || "")}</span></div>`;
       }).join("") || `<div class="muted">Research snapshots еще не записаны.</div>`;
+    }
+
+    function renderQueryDiagnostics(rows) {
+      const totals = rows.reduce((acc, row) => {
+        const counts = row.source_counts || {}, matching = row.matching || {}, full = row.full_costs || {};
+        acc.kalshi += counts.kalshi || 0;
+        acc.polymarket += counts.polymarket || 0;
+        acc.compatible += matching.structurally_compatible_pairs || 0;
+        acc.passing += row.passing_count || 0;
+        acc.best = Math.max(acc.best, full.best_net_edge || -999);
+        return acc;
+      }, { kalshi: 0, polymarket: 0, compatible: 0, passing: 0, best: -999 });
+      el("queryDiagCount").textContent = rows.length;
+      el("queryDiagKalshi").textContent = totals.kalshi;
+      el("queryDiagPolymarket").textContent = totals.polymarket;
+      el("queryDiagCompatible").textContent = totals.compatible;
+      el("queryDiagPassing").textContent = totals.passing;
+      el("queryDiagBest").textContent = totals.best <= -999 ? "n/a" : pct(totals.best);
+      el("queryDiagTable").innerHTML = rows.length ? rows.map(row => {
+        const counts = row.source_counts || {}, matching = row.matching || {}, noCosts = row.no_costs || {}, full = row.full_costs || {};
+        return `<tr>
+          <td><div class="route">${escapeHtml(row.query || "")}</div></td>
+          <td class="num">${counts.kalshi || 0} / ${counts.polymarket || 0}</td>
+          <td>пар=${matching.pairs_checked || 0}<br>текст=${matching.text_candidates || 0}<br>структура=${matching.structurally_compatible_pairs || 0}</td>
+          <td>legs=${noCosts.candidate_legs || 0}<br>best=${noCosts.best_net_edge == null ? "n/a" : pct(noCosts.best_net_edge)}</td>
+          <td>legs=${full.candidate_legs || 0}<br>pass=${row.passing_count || 0}<br>best=${full.best_net_edge == null ? "n/a" : pct(full.best_net_edge)}</td>
+          <td><div class="chips">${chips(row.rejection_counts || {}, "reject") || `<span class="muted">нет отказов</span>`}</div></td>
+          <td class="num">${row.detected_at || ""}</td>
+        </tr>`;
+      }).join("") : `<tr><td colspan="7" class="muted">Файл data/query-diagnostics.jsonl пока пуст. Запусти query-diagnostics monitor, чтобы увидеть воронку по preset-запросам.</td></tr>`;
     }
 
     function renderScanSummary(targetId, scan) {
@@ -1080,6 +1150,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
     el("coverageRefreshBtn").addEventListener("click", () => refreshCoverage().then(render));
     el("healthRefreshBtn").addEventListener("click", () => refreshHealth().then(render));
     el("researchRefreshBtn").addEventListener("click", () => refreshResearch().then(render));
+    el("queryDiagRefreshBtn").addEventListener("click", () => refreshQueryDiagnostics().then(render));
     el("reviewRefreshBtn").addEventListener("click", () => refreshReview().then(render));
     el("nearRefreshBtn").addEventListener("click", refreshNearMisses);
     el("paperEnterBtn").addEventListener("click", paperEnter);

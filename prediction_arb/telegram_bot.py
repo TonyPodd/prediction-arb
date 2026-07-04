@@ -9,6 +9,7 @@ from prediction_arb.capital import plan_capital
 from prediction_arb.coverage import summarize_source_coverage
 from prediction_arb.paper import paper_enter_from_monitor, paper_sync_from_monitor
 from prediction_arb.portfolio import load_portfolio, portfolio_summary
+from prediction_arb.query_diagnostics import latest_by_query
 from prediction_arb.reporting import latest_opportunities, summarize_monitor_history
 from prediction_arb.review_analysis import summarize_review_quality
 from prediction_arb.review_store import append_review_label, load_review_queue
@@ -19,7 +20,12 @@ def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | 
     offset = None
     print("Цикл Telegram-бота запущен.")
     while True:
-        updates = _telegram_api(bot_token, "getUpdates", {"timeout": 25, "offset": offset})
+        try:
+            updates = _telegram_api(bot_token, "getUpdates", {"timeout": 25, "offset": offset})
+        except Exception as exc:
+            print(f"Ошибка Telegram polling: {exc.__class__.__name__}: {exc}")
+            time.sleep(max(poll_interval, 5.0))
+            continue
         for update in updates.get("result", []):
             offset = int(update.get("update_id", 0)) + 1
             callback = update.get("callback_query") or {}
@@ -49,6 +55,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "Я показываю состояние монитора, план капитала, бумажный портфель и очередь ручной проверки.\n\n"
             "Команды:\n"
             "/status [файл] - статус монитора\n"
+            "/digest - короткий дайджест монитора и поиска\n"
             "/report [файл] - лучшие активные маршруты\n"
             "/review - сделки для ручной проверки\n"
             "/review_report - качество ручной разметки\n"
@@ -73,6 +80,8 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"Активно сейчас: {summary['latest_active_count']} маршрутов всего={summary['unique_routes_seen']}\n"
             f"Последний успешный снимок: {summary['last_success_detected_at']}"
         )
+    if command == "/digest":
+        return _format_digest(_command_file(parts, monitor_file))
     if command == "/report":
         summary = summarize_monitor_history(_command_file(parts, monitor_file), top=5)
         lines = [
@@ -175,7 +184,7 @@ def command_reply_markup(text: str) -> dict[str, object]:
     if command in {"/start", "/help"}:
         return {
             "keyboard": [
-                [{"text": "Статус"}, {"text": "Отчет"}],
+                [{"text": "Статус"}, {"text": "Дайджест"}, {"text": "Отчет"}],
                 [{"text": "Проверка"}, {"text": "Капитал"}],
                 [{"text": "Качество"}, {"text": "Портфель"}],
                 [{"text": "Покрытие"}],
@@ -184,7 +193,7 @@ def command_reply_markup(text: str) -> dict[str, object]:
         }
     if command == "/review":
         return _review_queue_keyboard()
-    return {"keyboard": [[{"text": "Статус"}, {"text": "Проверка"}, {"text": "Отчет"}]], "resize_keyboard": True}
+    return {"keyboard": [[{"text": "Статус"}, {"text": "Дайджест"}, {"text": "Проверка"}, {"text": "Отчет"}]], "resize_keyboard": True}
 
 
 def _handle_callback(bot_token: str, callback: dict[str, object], allowed_chat_id: str | None) -> None:
@@ -241,6 +250,63 @@ def _format_review_report() -> str:
     return "\n".join(lines)
 
 
+def _format_digest(monitor_file: Path) -> str:
+    summary = summarize_monitor_history(monitor_file, top=3)
+    diagnostics = latest_by_query(_read_jsonl(Path("data/query-diagnostics.jsonl")))
+    lines = [
+        "Дайджест prediction-arb",
+        f"монитор: активно={summary['latest_active_count']} ошибок={summary['error_snapshots']} последний={summary['last_success_detected_at']}",
+    ]
+    best = (summary.get("latest_routes") or summary.get("best_routes") or [])
+    if best:
+        item = best[0]
+        lines.append(f"лучший маршрут: {item.get('outcome')} {item.get('route')} доходность={_fmt_rate(item.get('net_edge'))} прибыль=${_float(item.get('estimated_profit')):.2f}")
+    else:
+        lines.append("лучший маршрут: сейчас нет активных сделок")
+
+    if not diagnostics:
+        lines.append("поиск: data/query-diagnostics.jsonl пока пуст")
+        return "\n".join(lines)
+
+    compatible = sum(int(((row.get("matching") or {}) if isinstance(row.get("matching"), dict) else {}).get("structurally_compatible_pairs") or 0) for row in diagnostics)
+    passing = sum(int(row.get("passing_count") or 0) for row in diagnostics)
+    lines.append(f"поиск: запросов={len(diagnostics)} совместимых_пар={compatible} проходящих_legs={passing}")
+    for row in sorted(diagnostics, key=_diagnostic_sort_key, reverse=True)[:5]:
+        counts = row.get("source_counts", {}) if isinstance(row.get("source_counts"), dict) else {}
+        matching = row.get("matching", {}) if isinstance(row.get("matching"), dict) else {}
+        full = row.get("full_costs", {}) if isinstance(row.get("full_costs"), dict) else {}
+        lines.append(
+            f"- {row.get('query')}: K/P={counts.get('kalshi', 0)}/{counts.get('polymarket', 0)} "
+            f"структура={matching.get('structurally_compatible_pairs', 0)} "
+            f"pass={row.get('passing_count', 0)} best={_fmt_rate(full.get('best_net_edge'))}"
+        )
+    return "\n".join(lines)
+
+
+def _diagnostic_sort_key(row: dict[str, object]) -> tuple[float, int]:
+    full = row.get("full_costs", {}) if isinstance(row.get("full_costs"), dict) else {}
+    try:
+        edge = float(full.get("best_net_edge") or -999)
+    except (TypeError, ValueError):
+        edge = -999.0
+    return edge, int(row.get("passing_count") or 0)
+
+
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+    return rows
+
+
 def _review_queue_keyboard() -> dict[str, object]:
     rows = [row for row in load_review_queue(limit=20) if not row.get("label")][:3]
     keyboard = []
@@ -263,6 +329,7 @@ def _normalize_command(value: str) -> str:
         "статус": "/status",
         "отчет": "/report",
         "отчёт": "/report",
+        "дайджест": "/digest",
         "проверка": "/review",
         "качество": "/review_report",
         "капитал": "/capital",
