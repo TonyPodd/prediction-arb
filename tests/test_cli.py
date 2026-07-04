@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from argparse import Namespace
 
-from prediction_arb.cli import _fetch_monitor_universe, _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
+from prediction_arb.cli import _expanded_queries, _fetch_monitor_universe, _filter_by_close_window, _filter_by_any_category, _load_dotenv, _load_monitor_keys, _monitor_error_payload, _near_miss_sort_key, _telegram_send_message_url, _validate_monitor_scope
 from prediction_arb.models import Market, TopOfBook
 
 
@@ -86,9 +86,17 @@ class CliTests(unittest.TestCase):
 
     def test_validate_monitor_scope_requires_some_universe(self) -> None:
         with self.assertRaises(ValueError):
-            _validate_monitor_scope(Namespace(query=[], category=[], all_markets=False))
+            _validate_monitor_scope(Namespace(query=[], preset=[], category=[], all_markets=False))
 
-        _validate_monitor_scope(Namespace(query=["btc"], category=[], all_markets=False))
+        _validate_monitor_scope(Namespace(query=["btc"], preset=[], category=[], all_markets=False))
+        _validate_monitor_scope(Namespace(query=[], preset=["short-term"], category=[], all_markets=False))
+
+    def test_expanded_queries_adds_preset_and_deduplicates(self) -> None:
+        rows = _expanded_queries(Namespace(query=["btc", "BTC"], preset=["short-term"]))
+
+        self.assertEqual(rows.count("btc"), 1)
+        self.assertIn("world cup", rows)
+        self.assertIn("lol esports", rows)
 
     def test_near_miss_sort_key_prefers_net_edge(self) -> None:
         weak = Namespace(net_edge=0.01, depth_edge=0.2, top_of_book_edge=0.3, match_score=0.9)
@@ -101,7 +109,7 @@ class CliTests(unittest.TestCase):
         query_kalshi = [Market("kalshi", "query", "Query", None, None, None, None, TopOfBook(), {})]
         all_poly = [Market("polymarket", "all", "All", None, None, None, None, TopOfBook(), {})]
         query_poly = [Market("polymarket", "query", "Query", None, None, None, None, TopOfBook(), {})]
-        args = Namespace(query=["btc"], category=[], all_markets=True, limit=10, min_close_minutes=None, max_close_hours=None)
+        args = Namespace(query=["btc"], preset=[], category=[], all_markets=True, limit=10, min_close_minutes=None, max_close_hours=None)
 
         with patch("prediction_arb.cli.kalshi.fetch_markets", return_value=all_kalshi), patch(
             "prediction_arb.cli.polymarket.fetch_markets_expanded", return_value=all_poly

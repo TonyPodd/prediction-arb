@@ -94,14 +94,69 @@ class TelegramBotTests(unittest.TestCase):
             text = handle_bot_command("/coverage 10 24", Path("missing.jsonl"))
 
         self.assertIn("Покрытие источников", text or "")
-        self.assertIn("kalshi: markets=1", text or "")
-        self.assertIn("polymarket: markets=1", text or "")
+        self.assertIn("kalshi: рынков=1", text or "")
+        self.assertIn("polymarket: рынков=1", text or "")
 
     def test_start_command_has_buttons(self) -> None:
         markup = command_reply_markup("/start")
 
         self.assertIn("keyboard", markup)
-        self.assertIn("/review", str(markup))
+        self.assertIn("Проверка", str(markup))
+
+    def test_russian_button_text_maps_to_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "monitor.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "detected_at": "2026-07-01T00:00:00+00:00",
+                        "opportunity_count": 0,
+                        "new_count": 0,
+                        "gone_count": 0,
+                        "active_keys": [],
+                        "opportunities": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            text = handle_bot_command("Статус", path)
+
+        self.assertIn("Статус монитора", text or "")
+
+    def test_report_uses_russian_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "monitor.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "detected_at": "2026-07-01T00:00:00+00:00",
+                        "opportunity_count": 1,
+                        "new_count": 1,
+                        "gone_count": 0,
+                        "active_keys": ["YES|kalshi|1|polymarket|2"],
+                        "opportunities": [
+                            {
+                                "outcome": "YES",
+                                "buy_source": "kalshi",
+                                "buy_market_id": "1",
+                                "sell_source": "polymarket",
+                                "sell_market_id": "2",
+                                "net_edge": 0.02,
+                                "executable_size": 100,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            text = handle_bot_command("Отчет", path)
+
+        self.assertIn("доходность=", text or "")
+        self.assertIn("прибыль=", text or "")
 
 
 if __name__ == "__main__":

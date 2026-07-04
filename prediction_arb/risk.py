@@ -79,7 +79,7 @@ def assess_candidate_risk(candidate: object) -> dict[str, object]:
     if any("unknown" in note or "no_fee_field" in note or note == "manual_fee_buffer_missing" for note in fee_notes):
         score += 20
         reasons.append("fee_model_uncertain")
-    if any(note == "kalshi_fee_model_not_implemented_use_manual_fee_bps" for note in fee_notes):
+    if any(note in {"kalshi_fee_model_not_implemented_use_manual_fee_bps", "kalshi_fee_unrounded_no_size"} for note in fee_notes):
         score += 10
         reasons.append("kalshi_fee_model_uncertain")
     if any(note == "limitless_fee_curve_unknown_use_manual_fee_bps" for note in fee_notes):

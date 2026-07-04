@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 
@@ -470,8 +471,8 @@ def _fee_estimate_per_share(
     route_fixed_costs: dict[str, float] | None = None,
     route_cost_bps: dict[str, float] | None = None,
 ) -> tuple[float, list[str]]:
-    buy_fee, buy_notes = _market_taker_fee_per_share(buy_market, buy_avg)
-    sell_fee, sell_notes = _market_taker_fee_per_share(sell_market, sell_avg)
+    buy_fee, buy_notes = _market_taker_fee_per_share(buy_market, buy_avg, executable_size)
+    sell_fee, sell_notes = _market_taker_fee_per_share(sell_market, sell_avg, executable_size)
     manual_fee = (buy_avg + sell_avg) * (manual_fee_bps / 10_000.0) if manual_fee_bps > 0 else 0.0
     notes = buy_notes + sell_notes
     if manual_fee_bps > 0:
@@ -520,7 +521,7 @@ def _route_cost(costs: dict[str, float], route: str) -> float:
     return float(costs.get(route, costs.get("*", 0.0)) or 0.0)
 
 
-def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, list[str]]:
+def _market_taker_fee_per_share(market: Market, price: float, size: float = 0.0) -> tuple[float, list[str]]:
     if market.source == "polymarket":
         if market.raw.get("feesEnabled") is False:
             return 0.0, ["polymarket_fees_disabled"]
@@ -542,7 +543,11 @@ def _market_taker_fee_per_share(market: Market, price: float) -> tuple[float, li
         return 0.0, ["limitless_no_fee_field"]
 
     if market.source == "kalshi":
-        return 0.0, ["kalshi_fee_model_not_implemented_use_manual_fee_bps"]
+        raw_fee = 0.07 * price * (1.0 - price)
+        if size > 0:
+            rounded_total = math.ceil(raw_fee * size * 100.0) / 100.0
+            return rounded_total / size, ["kalshi_taker_fee_rate=0.07", "kalshi_fee_rounded_up_cent"]
+        return raw_fee, ["kalshi_taker_fee_rate=0.07", "kalshi_fee_unrounded_no_size"]
 
     return 0.0, [f"{market.source}_fee_unknown"]
 

@@ -17,7 +17,7 @@ from prediction_arb.sources import kalshi, polymarket
 
 def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | None = None, poll_interval: float = 2.0) -> None:
     offset = None
-    print("Telegram bot command loop started.")
+    print("Цикл Telegram-бота запущен.")
     while True:
         updates = _telegram_api(bot_token, "getUpdates", {"timeout": 25, "offset": offset})
         for update in updates.get("result", []):
@@ -42,21 +42,21 @@ def run_telegram_bot(bot_token: str, monitor_file: Path, allowed_chat_id: str | 
 
 def handle_bot_command(text: str, monitor_file: Path) -> str | None:
     parts = text.split()
-    command = parts[0].lower()
+    command = _normalize_command(parts[0])
     if command in ("/start", "/help"):
         return (
             "Бот prediction-arb\n"
             "Я показываю состояние монитора, план капитала, бумажный портфель и очередь ручной проверки.\n\n"
             "Команды:\n"
-            "/status [file] - статус монитора\n"
-            "/report [file] - лучшие активные маршруты\n"
+            "/status [файл] - статус монитора\n"
+            "/report [файл] - лучшие активные маршруты\n"
             "/review - сделки для ручной проверки\n"
             "/review_report - качество ручной разметки\n"
-            "/capital [kalshi_cash] [polymarket_cash] [file] - план капитала\n"
-            "/coverage [limit] [hours] [category] - покрытие источников\n"
+            "/capital [кэш_kalshi] [кэш_polymarket] [файл] - план капитала\n"
+            "/coverage [лимит] [часы] [категория] - покрытие источников\n"
             "/portfolio - бумажный портфель\n"
-            "/paper_enter [file] [max] - бумажный вход\n"
-            "/paper_sync [file] - обновить бумажные позиции\n"
+            "/paper_enter [файл] [макс] - бумажный вход\n"
+            "/paper_sync [файл] - обновить бумажные позиции\n"
             "/files - файлы монитора"
         )
     if command == "/files":
@@ -69,7 +69,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         return (
             f"Статус монитора\n"
             f"Файл: {summary['input']}\n"
-            f"Снимки: {summary['snapshots']} ok={summary['successful_snapshots']} ошибки={summary['error_snapshots']}\n"
+            f"Снимки: {summary['snapshots']} успешных={summary['successful_snapshots']} ошибки={summary['error_snapshots']}\n"
             f"Активно сейчас: {summary['latest_active_count']} маршрутов всего={summary['unique_routes_seen']}\n"
             f"Последний успешный снимок: {summary['last_success_detected_at']}"
         )
@@ -82,7 +82,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
         for item in summary.get("latest_routes") or summary["best_routes"]:
             net_edge = item["net_edge"] or 0.0
             profit = item["estimated_profit"] or 0.0
-            lines.append(f"- {item['outcome']} {item['route']} edge={net_edge:.4f} profit=${profit:.2f}")
+            lines.append(f"- {item['outcome']} {item['route']} доходность={net_edge:.2%} прибыль=${profit:.2f}")
         if summary["last_error"]:
             lines.append(f"последняя ошибка: {summary['last_error']}")
         return "\n".join(lines)
@@ -105,10 +105,10 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"файл: {path}",
             f"выбрано={plan['allocated_count']} отклонено={plan['rejected_count']}",
             f"кэш на покупку=${plan['total_buy_cash_required']:.2f} оценка прибыли=${plan['total_estimated_profit']:.2f}",
-            f"остаток kalshi=${plan['cash_remaining'].get('kalshi', 0):.2f} polymarket=${plan['cash_remaining'].get('polymarket', 0):.2f}",
+            f"остаток Kalshi=${plan['cash_remaining'].get('kalshi', 0):.2f} Polymarket=${plan['cash_remaining'].get('polymarket', 0):.2f}",
         ]
         for item in plan["allocated"][:5]:
-            lines.append(f"- {item['outcome']} {item['route']} cash=${item['buy_cash_required']:.2f} profit=${item['estimated_profit']:.2f}")
+            lines.append(f"- {item['outcome']} {item['route']} кэш=${item['buy_cash_required']:.2f} прибыль=${item['estimated_profit']:.2f}")
         return "\n".join(lines)
     if command == "/coverage":
         limit = int(_float(parts[1])) if len(parts) > 1 and _float(parts[1]) > 0 else 1000
@@ -130,7 +130,7 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             f"кэш kalshi=${summary['cash'].get('kalshi', 0):.2f} polymarket=${summary['cash'].get('polymarket', 0):.2f}\n"
             f"открыто={summary['open_count']} закрыто={summary['closed_count']} отклонено={summary['rejected_count']}\n"
             f"открытый notional=${summary['open_notional']:.2f} прибыль входа=${summary['open_estimated_profit']:.2f} текущая прибыль=${summary['current_estimated_profit']:.2f}\n"
-            f"realized pnl=${summary['realized_pnl']:.2f}"
+            f"зафиксированный PnL=${summary['realized_pnl']:.2f}"
         )
     if command == "/paper_enter":
         path = _file_from_name(parts[1]) if len(parts) > 1 else monitor_file
@@ -140,8 +140,8 @@ def handle_bot_command(text: str, monitor_file: Path) -> str | None:
             "Бумажный вход\n"
             f"файл: {path}\n"
             f"вошли={result['entered_count']}\n"
-            f"открыто={result['portfolio']['open_count']} cash_kalshi=${result['portfolio']['cash'].get('kalshi', 0):.2f} "
-            f"cash_polymarket=${result['portfolio']['cash'].get('polymarket', 0):.2f}"
+            f"открыто={result['portfolio']['open_count']} кэш Kalshi=${result['portfolio']['cash'].get('kalshi', 0):.2f} "
+            f"кэш Polymarket=${result['portfolio']['cash'].get('polymarket', 0):.2f}"
         )
     if command == "/paper_sync":
         path = _file_from_name(parts[1]) if len(parts) > 1 else monitor_file
@@ -171,20 +171,20 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str, reply_markup:
 
 
 def command_reply_markup(text: str) -> dict[str, object]:
-    command = (text.split() or [""])[0].lower()
+    command = _normalize_command((text.split() or [""])[0])
     if command in {"/start", "/help"}:
         return {
             "keyboard": [
-                [{"text": "/status"}, {"text": "/report"}],
-                [{"text": "/review"}, {"text": "/capital"}],
-                [{"text": "/review_report"}, {"text": "/portfolio"}],
-                [{"text": "/coverage"}],
+                [{"text": "Статус"}, {"text": "Отчет"}],
+                [{"text": "Проверка"}, {"text": "Капитал"}],
+                [{"text": "Качество"}, {"text": "Портфель"}],
+                [{"text": "Покрытие"}],
             ],
             "resize_keyboard": True,
         }
     if command == "/review":
         return _review_queue_keyboard()
-    return {"keyboard": [[{"text": "/status"}, {"text": "/review"}, {"text": "/report"}]], "resize_keyboard": True}
+    return {"keyboard": [[{"text": "Статус"}, {"text": "Проверка"}, {"text": "Отчет"}]], "resize_keyboard": True}
 
 
 def _handle_callback(bot_token: str, callback: dict[str, object], allowed_chat_id: str | None) -> None:
@@ -215,8 +215,8 @@ def _format_review_queue(limit: int = 5) -> str:
         lines.extend(
             [
                 "",
-                f"#{row.get('review_id')} риск={risk.get('risk_level')} score={risk.get('risk_score')}",
-                f"{candidate.get('outcome')} {candidate.get('buy_source')} -> {candidate.get('sell_source')} edge={net_edge:.2%} profit=${net_edge * size:.2f}",
+                f"#{row.get('review_id')} риск={_translate_risk(risk.get('risk_level'))} балл={risk.get('risk_score')}",
+                f"{candidate.get('outcome')} {candidate.get('buy_source')} -> {candidate.get('sell_source')} доходность={net_edge:.2%} прибыль=${net_edge * size:.2f}",
                 f"Купить: {candidate.get('buy_title')}",
                 f"Продать: {candidate.get('sell_title')}",
             ]
@@ -232,12 +232,12 @@ def _format_review_report() -> str:
     reasons = report.get("different_event_reason_counts", {}) if isinstance(report.get("different_event_reason_counts"), dict) else {}
     lines = [
         "Качество ручной проверки",
-        f"всего={report['total_candidates']} размечено={report['labeled_count']} pending={report['pending_count']}",
+        f"всего={report['total_candidates']} размечено={report['labeled_count']} ожидает={report['pending_count']}",
         f"то же={labels.get('same_event', 0)} не то={labels.get('different_event', 0)} сомнительно={labels.get('unsure', 0)}",
-        f"same rate={_fmt_rate(same)} false positive={_fmt_rate(fp)}",
+        f"доля правильных={_fmt_rate(same)} ложные совпадения={_fmt_rate(fp)}",
     ]
     if reasons:
-        lines.append("Причины у 'не то': " + ", ".join(f"{key}:{value}" for key, value in list(reasons.items())[:5]))
+        lines.append("Причины у 'не то': " + ", ".join(f"{_translate_reason(key)}:{value}" for key, value in list(reasons.items())[:5]))
     return "\n".join(lines)
 
 
@@ -254,6 +254,41 @@ def _review_queue_keyboard() -> dict[str, object]:
             ]
         )
     return {"inline_keyboard": keyboard} if keyboard else {"keyboard": [[{"text": "/status"}, {"text": "/report"}]], "resize_keyboard": True}
+
+
+def _normalize_command(value: str) -> str:
+    mapping = {
+        "старт": "/start",
+        "помощь": "/help",
+        "статус": "/status",
+        "отчет": "/report",
+        "отчёт": "/report",
+        "проверка": "/review",
+        "качество": "/review_report",
+        "капитал": "/capital",
+        "покрытие": "/coverage",
+        "портфель": "/portfolio",
+        "файлы": "/files",
+    }
+    normalized = value.lower().strip()
+    return mapping.get(normalized, normalized)
+
+
+def _translate_risk(value: object) -> str:
+    return {"low": "низкий", "medium": "средний", "high": "высокий"}.get(str(value), str(value))
+
+
+def _translate_reason(value: str) -> str:
+    return {
+        "sports_competition_terms_uncertain": "спортивные условия отличаются",
+        "low_match_score": "слабое совпадение текста",
+        "medium_match_score": "среднее совпадение текста",
+        "fee_model_uncertain": "комиссии оценены неуверенно",
+        "kalshi_fee_model_uncertain": "Kalshi комиссия оценена неуверенно",
+        "hard_structural_warning": "жесткое структурное предупреждение",
+        "price_source_differs": "разный источник цены",
+        "price_pair_differs": "разная ценовая пара",
+    }.get(value, value)
 
 
 def _telegram_api(bot_token: str, method: str, payload: dict[str, object]) -> dict:
@@ -292,17 +327,17 @@ def _format_coverage(coverage: dict[str, object], *, limit: int, max_hours: floa
     sources = coverage.get("sources", {}) if isinstance(coverage, dict) else {}
     lines = [
         "Покрытие источников",
-        f"limit={limit} max_hours={max_hours:g}" + (f" category={category}" if category else ""),
+        f"лимит={limit} горизонт_часов={max_hours:g}" + (f" категория={category}" if category else ""),
     ]
     for name in ("kalshi", "polymarket"):
         source = sources.get(name, {}) if isinstance(sources, dict) else {}
         lines.append(
-            f"{name}: markets={source.get('count', 0)} short24h={source.get('short_term_24h_count', 0)} "
-            f"kinds={_compact_counts(source.get('by_condition_kind', {}))}"
+            f"{name}: рынков={source.get('count', 0)} до_24ч={source.get('short_term_24h_count', 0)} "
+            f"типы={_compact_counts(source.get('by_condition_kind', {}))}"
         )
         lines.append(
-            f"  assets={_compact_counts(source.get('by_asset', {}), limit=5)} "
-            f"intervals={_compact_counts(source.get('by_interval_minutes', {}), limit=5)}"
+            f"  активы={_compact_counts(source.get('by_asset', {}), limit=5)} "
+            f"интервалы={_compact_counts(source.get('by_interval_minutes', {}), limit=5)}"
         )
     return "\n".join(lines)
 

@@ -43,7 +43,7 @@ class PolymarketTests(unittest.TestCase):
     def test_fetch_markets_paginates_gamma_offsets(self) -> None:
         calls = []
 
-        def fake_get_json(_url: str, params: dict) -> list[dict]:
+        def fake_get_json(_url: str, params: dict, **kwargs) -> list[dict]:
             calls.append(dict(params))
             offset = int(params["offset"])
             limit = int(params["limit"])
@@ -65,7 +65,7 @@ class PolymarketTests(unittest.TestCase):
         self.assertEqual([call["limit"] for call in calls], [100, 100, 50])
 
     def test_fetch_markets_expanded_reads_event_markets_and_skips_closed(self) -> None:
-        def fake_get_json(url: str, params: dict) -> list[dict]:
+        def fake_get_json(url: str, params: dict, **kwargs) -> list[dict]:
             if url.endswith("/markets"):
                 return []
             if url.endswith("/events"):

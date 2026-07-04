@@ -22,7 +22,7 @@ def candidate(**overrides: object) -> SimpleNamespace:
         "match_score": 0.28,
         "match_warnings": ["competition_terms_only_on_one_side"],
         "fee_estimate": 0.00195,
-        "fee_notes": ["kalshi_fee_model_not_implemented_use_manual_fee_bps", "manual_fee_buffer_missing"],
+        "fee_notes": ["kalshi_fee_unrounded_no_size", "manual_fee_buffer_missing"],
         "rejection_reason": None,
     }
     defaults.update(overrides)

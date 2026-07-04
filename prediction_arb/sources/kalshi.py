@@ -75,6 +75,8 @@ def _fetch_markets_for_tag(tag: str, limit: int) -> list[Market]:
             "tags": tag,
             "include_volume": "true",
         },
+        timeout=8.0,
+        retries=0,
     )
     series = series_rows.get("series", []) if isinstance(series_rows, dict) else []
     markets: list[Market] = []
@@ -101,6 +103,8 @@ def _fetch_sports_markets_for_tag(tag: str, query_tokens: set[str], limit: int) 
             "tags": tag,
             "include_volume": "true",
         },
+        timeout=8.0,
+        retries=0,
     )
     series = series_rows.get("series", []) if isinstance(series_rows, dict) else []
     markets: list[Market] = []

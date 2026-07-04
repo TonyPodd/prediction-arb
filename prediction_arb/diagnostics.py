@@ -23,6 +23,7 @@ def build_health_report(
     route_fixed_costs: dict[str, float] | None = None,
     route_cost_bps: dict[str, float] | None = None,
     min_profit: float = 1.0,
+    max_depth_pairs: int = 40,
 ) -> dict[str, object]:
     pair_stats = _pair_stats(limitless_markets, polymarket_markets, min_match_score=min_match_score)
     no_cost = _scan_summary(
@@ -36,6 +37,7 @@ def build_health_report(
         route_fixed_costs={},
         route_cost_bps={},
         min_profit=min_profit,
+        max_depth_pairs=max_depth_pairs,
     )
     fees_only = _scan_summary(
         limitless_markets,
@@ -48,6 +50,7 @@ def build_health_report(
         route_fixed_costs={},
         route_cost_bps={},
         min_profit=min_profit,
+        max_depth_pairs=max_depth_pairs,
     )
     full_costs = _scan_summary(
         limitless_markets,
@@ -60,6 +63,7 @@ def build_health_report(
         route_fixed_costs=route_fixed_costs or {},
         route_cost_bps=route_cost_bps or {},
         min_profit=min_profit,
+        max_depth_pairs=max_depth_pairs,
     )
     return {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -72,6 +76,7 @@ def build_health_report(
             "route_fixed_costs": route_fixed_costs or {},
             "route_cost_bps": route_cost_bps or {},
             "min_profit": min_profit,
+            "max_depth_pairs": max_depth_pairs,
         },
         "coverage": summarize_source_coverage(limitless_markets, polymarket_markets, example_limit=0),
         "matching": pair_stats,
@@ -131,6 +136,7 @@ def _scan_summary(
     route_fixed_costs: dict[str, float],
     route_cost_bps: dict[str, float],
     min_profit: float,
+    max_depth_pairs: int,
 ) -> dict[str, object]:
     rows = scan_depth_candidates(
         limitless_markets,
@@ -145,6 +151,7 @@ def _scan_summary(
         route_fixed_costs=route_fixed_costs,
         route_cost_bps=route_cost_bps,
         include_filtered=True,
+        max_depth_pairs=max_depth_pairs,
     )
     passing = [row for row in rows if not row.rejection_reason]
     rejected = [row for row in rows if row.rejection_reason]

@@ -107,6 +107,19 @@ class DepthTests(unittest.TestCase):
         self.assertEqual(fee, 0.0)
         self.assertIn("polymarket_fee_rounded_5dp", notes)
 
+    def test_kalshi_fee_uses_expected_earnings_and_rounds_total_up_to_cent(self) -> None:
+        market = Market("kalshi", "m", "M", None, None, None, None, TopOfBook(), {})
+        from prediction_arb.depth import _fee_estimate_per_share, _market_taker_fee_per_share
+
+        fee, notes = _market_taker_fee_per_share(market, 0.5, size=10)
+
+        self.assertEqual(fee, 0.018)
+        self.assertIn("kalshi_taker_fee_rate=0.07", notes)
+        self.assertIn("kalshi_fee_rounded_up_cent", notes)
+
+        total_fee, _ = _fee_estimate_per_share(market, Market("polymarket", "p", "P", None, None, None, None, TopOfBook(), {"feesEnabled": False}), 0.5, 0.5, 0, executable_size=10)
+        self.assertEqual(total_fee, 0.018)
+
     def test_missing_manual_fee_buffer_is_called_out(self) -> None:
         buy_market = Market("limitless", "buy", "Buy", None, None, None, None, TopOfBook(), {})
         sell_market = Market("polymarket", "sell", "Sell", None, None, None, None, TopOfBook(), {"feesEnabled": False})

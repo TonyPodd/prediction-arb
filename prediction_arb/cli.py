@@ -30,6 +30,23 @@ from prediction_arb.sources import kalshi, limitless, polymarket
 from prediction_arb.telegram_bot import run_telegram_bot
 
 
+SEARCH_PRESETS = {
+    "short-term": [
+        "btc",
+        "eth",
+        "sol",
+        "xrp",
+        "doge",
+        "world cup",
+        "wimbledon tennis",
+        "tennis match",
+        "lol esports",
+        "cs2 esports",
+        "mlb baseball",
+    ],
+}
+
+
 def main() -> None:
     _load_dotenv(Path(".env"))
     parser = argparse.ArgumentParser(prog="prediction-arb")
@@ -65,6 +82,7 @@ def main() -> None:
 
     coverage_parser = subparsers.add_parser("coverage", help="Summarize fetched source coverage by kind, asset, interval, and close window.")
     coverage_parser.add_argument("--query", action="append", default=[])
+    coverage_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
     coverage_parser.add_argument("--category", action="append", default=[])
     coverage_parser.add_argument("--all-markets", action="store_true")
     coverage_parser.add_argument("--limit", type=int, default=100)
@@ -75,6 +93,7 @@ def main() -> None:
 
     health_parser = subparsers.add_parser("health", help="Diagnose source coverage, matching funnel, depth, fees, and operational costs.")
     health_parser.add_argument("--query", action="append", default=[])
+    health_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
     health_parser.add_argument("--category", action="append", default=[])
     health_parser.add_argument("--all-markets", action="store_true")
     health_parser.add_argument("--limit", type=int, default=300)
@@ -86,6 +105,7 @@ def main() -> None:
     health_parser.add_argument("--route-fixed-cost", default="*=2")
     health_parser.add_argument("--route-cost-bps", default="*=25")
     health_parser.add_argument("--min-match-score", type=float, default=0.25)
+    health_parser.add_argument("--max-depth-pairs", type=int, default=40)
     health_parser.add_argument("--min-close-minutes", type=float)
     health_parser.add_argument("--max-close-hours", type=float, default=24.0)
     health_parser.add_argument("--output", type=Path)
@@ -107,6 +127,7 @@ def main() -> None:
 
     near_parser = subparsers.add_parser("near-misses", help="Show best rejected depth candidates with rejection reasons.")
     near_parser.add_argument("--query", action="append", default=[])
+    near_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
     near_parser.add_argument("--category", action="append", default=[])
     near_parser.add_argument("--all-markets", action="store_true")
     near_parser.add_argument("--limit", type=int, default=200)
@@ -125,6 +146,7 @@ def main() -> None:
 
     near_opps_parser = subparsers.add_parser("near-opportunities", help="Show positive-edge candidates rejected by profit/cost filters.")
     near_opps_parser.add_argument("--query", action="append", default=[])
+    near_opps_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
     near_opps_parser.add_argument("--category", action="append", default=[])
     near_opps_parser.add_argument("--all-markets", action="store_true")
     near_opps_parser.add_argument("--limit", type=int, default=300)
@@ -178,6 +200,7 @@ def main() -> None:
 
     monitor_parser = subparsers.add_parser("monitor", help="Repeatedly scan depth opportunities and append snapshots to JSONL.")
     monitor_parser.add_argument("--query", action="append", default=[])
+    monitor_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[], help="Append a bounded query preset, e.g. short-term.")
     monitor_parser.add_argument("--category", action="append", default=[], help="Filter fetched markets by category/tag/title text. Can be repeated.")
     monitor_parser.add_argument("--all-markets", action="store_true", help="Scan fetched source universes without query filtering.")
     monitor_parser.add_argument("--limit", type=int, default=50)
@@ -187,9 +210,9 @@ def main() -> None:
     monitor_parser.add_argument("--min-net-edge", type=float, default=0.005)
     monitor_parser.add_argument("--min-profit", type=float, default=0.0)
     monitor_parser.add_argument("--safety-buffer", type=float, default=0.002)
-    monitor_parser.add_argument("--fee-bps", type=float, default=0.0)
-    monitor_parser.add_argument("--route-fixed-cost", default="", help="Fixed USDC operational costs per route, divided by executable size.")
-    monitor_parser.add_argument("--route-cost-bps", default="", help="Operational bps per route on buy+sell notional.")
+    monitor_parser.add_argument("--fee-bps", type=float, default=50.0)
+    monitor_parser.add_argument("--route-fixed-cost", default="*=2", help="Fixed USDC operational costs per route, divided by executable size.")
+    monitor_parser.add_argument("--route-cost-bps", default="*=25", help="Operational bps per route on buy+sell notional.")
     monitor_parser.add_argument("--min-match-score", type=float, default=0.25)
     monitor_parser.add_argument("--max-depth-pairs", type=int, default=40, help="Maximum structurally compatible pairs to fetch orderbooks for per iteration. 0 means no limit.")
     monitor_parser.add_argument("--min-close-minutes", type=float)
@@ -209,6 +232,7 @@ def main() -> None:
 
     research_parser = subparsers.add_parser("research-monitor", help="Slow read-only 7-day monitor for near-opportunities and matcher research.")
     research_parser.add_argument("--query", action="append", default=[])
+    research_parser.add_argument("--preset", choices=sorted(SEARCH_PRESETS), action="append", default=[])
     research_parser.add_argument("--category", action="append", default=[])
     research_parser.add_argument("--all-markets", action="store_true")
     research_parser.add_argument("--limit", type=int, default=500)
@@ -461,7 +485,7 @@ def _diagnose(args: argparse.Namespace) -> None:
 
 
 def _coverage(args: argparse.Namespace) -> None:
-    if not args.query and not args.category:
+    if not _expanded_queries(args) and not args.category:
         args.all_markets = True
     limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
     payload = summarize_source_coverage(
@@ -474,7 +498,7 @@ def _coverage(args: argparse.Namespace) -> None:
 
 
 def _health(args: argparse.Namespace) -> None:
-    if not args.query and not args.category:
+    if not _expanded_queries(args) and not args.category:
         args.all_markets = True
     limitless_markets, polymarket_markets = _fetch_monitor_universe(args)
     payload = build_health_report(
@@ -488,6 +512,7 @@ def _health(args: argparse.Namespace) -> None:
         route_fixed_costs=_parse_cost_map(args.route_fixed_cost),
         route_cost_bps=_parse_cost_map(args.route_cost_bps),
         min_profit=args.min_profit,
+        max_depth_pairs=args.max_depth_pairs,
     )
     payload["scope"] = _monitor_scope_label(args)
     _write_or_print([payload], args.output)
@@ -674,7 +699,7 @@ def _monitor(args: argparse.Namespace) -> None:
 
 
 def _research_monitor(args: argparse.Namespace) -> None:
-    if not args.query and not args.category:
+    if not _expanded_queries(args) and not args.category:
         args.all_markets = True
     scope_label = _monitor_scope_label(args)
     iteration = 0
@@ -818,8 +843,9 @@ def _monitor_error_payload(query: str, exc: Exception) -> dict:
 
 def _monitor_scope_label(args: argparse.Namespace) -> str:
     parts = []
-    if args.query:
-        parts.append("query=" + ",".join(args.query))
+    queries = _expanded_queries(args)
+    if queries:
+        parts.append("query=" + ",".join(queries))
     if args.category:
         parts.append("category=" + ",".join(args.category))
     if args.all_markets:
@@ -830,7 +856,7 @@ def _monitor_scope_label(args: argparse.Namespace) -> str:
 
 
 def _validate_monitor_scope(args: argparse.Namespace) -> None:
-    if not args.query and not args.category and not args.all_markets:
+    if not _expanded_queries(args) and not args.category and not args.all_markets:
         raise ValueError("monitor requires at least one --query, --category, or --all-markets.")
 
 
@@ -1016,16 +1042,17 @@ def _filter_markets(markets: list, min_liquidity: float) -> list:
 
 
 def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
-    kalshi_seed = kalshi.fetch_markets(limit=args.limit) if args.all_markets or not args.query else []
-    polymarket_seed = polymarket.fetch_markets_expanded(limit=args.limit) if args.all_markets or not args.query else []
+    queries = _expanded_queries(args)
+    kalshi_seed = kalshi.fetch_markets(limit=args.limit) if args.all_markets or not queries else []
+    polymarket_seed = polymarket.fetch_markets_expanded(limit=args.limit) if args.all_markets or not queries else []
     kalshi_query = [
         market
-        for query in args.query
+        for query in queries
         for market in _fetch_kalshi(args.limit, query)
     ]
     polymarket_query = [
         market
-        for query in args.query
+        for query in queries
         for market in _fetch_polymarket(args.limit, query)
     ]
     kalshi_markets = _dedupe_markets([*kalshi_seed, *kalshi_query])
@@ -1038,6 +1065,22 @@ def _fetch_monitor_universe(args: argparse.Namespace) -> tuple[list, list]:
     kalshi_markets = _filter_by_close_window(kalshi_markets, args.min_close_minutes, args.max_close_hours)
     polymarket_markets = _filter_by_close_window(polymarket_markets, args.min_close_minutes, args.max_close_hours)
     return kalshi_markets, polymarket_markets
+
+
+def _expanded_queries(args: argparse.Namespace) -> list[str]:
+    queries = list(getattr(args, "query", []) or [])
+    for preset in getattr(args, "preset", []) or []:
+        queries.extend(SEARCH_PRESETS.get(str(preset), []))
+    seen = set()
+    rows = []
+    for query in queries:
+        normalized = str(query).strip()
+        key = normalized.lower()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        rows.append(normalized)
+    return rows
 
 
 def _dedupe_markets(markets: object) -> list:

@@ -13,15 +13,19 @@ def fetch_markets(limit: int = 100) -> list[Market]:
     return _fetch_market_feed(limit=limit, order="volume24hr")
 
 
-def fetch_markets_expanded(limit: int = 100) -> list[Market]:
+def fetch_markets_expanded(limit: int = 100, *, orders: tuple[str, ...] | None = None, include_events: bool = True) -> list[Market]:
     markets: list[Market] = []
     seen: set[str] = set()
     per_feed_limit = max(limit, 200)
+    feed_orders = orders or ("volume24hr", "volume_24hr", "liquidity", "endDate")
 
-    for order in ("volume24hr", "volume_24hr", "liquidity", "endDate"):
+    for order in feed_orders:
         _extend_unique(markets, seen, _fetch_market_feed(limit=per_feed_limit, order=order), limit=limit)
         if len(markets) >= limit:
             return markets[:limit]
+
+    if not include_events:
+        return markets[:limit]
 
     for order in ("volume_24hr", "liquidity", "end_date"):
         _extend_unique(markets, seen, _fetch_event_markets(limit=per_feed_limit, order=order), limit=limit)
@@ -49,6 +53,8 @@ def _fetch_market_feed(limit: int, order: str) -> list[Market]:
                 "order": order,
                 "ascending": "false",
             },
+            timeout=8.0,
+            retries=0,
         )
         rows = data if isinstance(data, list) else data.get("markets", [])
         if not rows:
@@ -89,6 +95,8 @@ def _fetch_event_markets(limit: int, order: str) -> list[Market]:
                 "order": order,
                 "ascending": "false",
             },
+            timeout=8.0,
+            retries=0,
         )
         rows = data if isinstance(data, list) else data.get("events", [])
         if not rows:
@@ -129,9 +137,10 @@ def search_markets(query: str, limit: int = 100) -> list[Market]:
     _extend_unique(markets, seen, fetch_public_search_markets(query, limit=max(limit, 100)), limit=limit)
     if len(markets) >= limit:
         return markets[:limit]
+    fallback_limit = max(limit, 40)
     local_matches = [
         market
-        for market in fetch_markets_expanded(limit=max(limit, 200))
+        for market in fetch_markets_expanded(limit=fallback_limit, orders=("volume24hr", "liquidity"), include_events=False)
         if query_tokens <= _tokens(_search_text(market))
     ]
     _extend_unique(markets, seen, local_matches, limit=limit)
@@ -145,6 +154,8 @@ def fetch_public_search_markets(query: str, limit: int = 100) -> list[Market]:
             "q": query,
             "limit": limit,
         },
+        timeout=8.0,
+        retries=0,
     )
     events = data.get("events", []) if isinstance(data, dict) else []
     markets: list[Market] = []
