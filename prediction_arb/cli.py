@@ -1231,7 +1231,7 @@ def _fetch_kalshi(limit: int, query: str, *, cache_ttl: float = 0.0) -> list:
 
 
 def _fetch_polymarket(limit: int, query: str, *, cache_ttl: float = 0.0) -> list:
-    key = f"polymarket:{limit}:{query or 'all'}"
+    key = f"polymarket:v2:{limit}:{query or 'all'}"
     return cached_markets(
         key,
         cache_ttl,

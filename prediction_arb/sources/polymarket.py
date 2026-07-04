@@ -7,6 +7,13 @@ from prediction_arb.models import Market, OrderBook, OrderLevel, TopOfBook
 
 
 GAMMA_URL = "https://gamma-api.polymarket.com"
+QUERY_EXPANSIONS = {
+    "btc": ["btc", "bitcoin"],
+    "eth": ["eth", "ethereum"],
+    "sol": ["sol", "solana"],
+    "xrp": ["xrp", "ripple"],
+    "doge": ["doge", "dogecoin"],
+}
 
 
 def fetch_markets(limit: int = 100) -> list[Market]:
@@ -134,15 +141,16 @@ def search_markets(query: str, limit: int = 100) -> list[Market]:
         return fetch_markets(limit=limit)
     markets: list[Market] = []
     seen: set[str] = set()
-    _extend_unique(markets, seen, fetch_public_search_markets(query, limit=max(limit, 100)), limit=limit)
-    if len(markets) >= limit:
-        return markets[:limit]
-    fallback_limit = max(limit, 40)
-    local_matches = [
-        market
-        for market in fetch_markets_expanded(limit=fallback_limit, orders=("volume24hr", "liquidity"), include_events=False)
-        if query_tokens <= _tokens(_search_text(market))
-    ]
+    for term in _expanded_search_terms(query):
+        _extend_unique(markets, seen, fetch_public_search_markets(term, limit=max(limit, 100)), limit=limit)
+        if len(markets) >= limit:
+            return markets[:limit]
+    fallback_limit = max(limit * 5, 200)
+    local_matches = []
+    for market in fetch_markets_expanded(limit=fallback_limit, orders=("volume24hr", "liquidity"), include_events=True):
+        market_tokens = _tokens(_search_text(market))
+        if query_tokens <= market_tokens or any(_tokens(term) <= market_tokens for term in _expanded_search_terms(query)):
+            local_matches.append(market)
     _extend_unique(markets, seen, local_matches, limit=limit)
     return markets[:limit]
 
@@ -152,7 +160,7 @@ def fetch_public_search_markets(query: str, limit: int = 100) -> list[Market]:
         f"{GAMMA_URL}/public-search",
         {
             "q": query,
-            "limit": limit,
+            "limit_per_type": limit,
         },
         timeout=8.0,
         retries=0,
@@ -339,3 +347,20 @@ def _tokens(value: str) -> set[str]:
     import re
 
     return {aliases.get(token, token) for token in re.findall(r"[a-z0-9]+", value.lower()) if len(token) > 2}
+
+
+def _expanded_search_terms(query: str) -> list[str]:
+    import re
+
+    terms = [query]
+    for token in re.findall(r"[a-z0-9]+", query.lower()):
+        terms.extend(QUERY_EXPANSIONS.get(token, []))
+    seen = set()
+    rows = []
+    for term in terms:
+        normalized = str(term).strip()
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            rows.append(normalized)
+    return rows
