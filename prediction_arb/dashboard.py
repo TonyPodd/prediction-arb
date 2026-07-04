@@ -667,7 +667,7 @@ _DASHBOARD_HTML = r"""<!doctype html>
       </div>
       <div class="panel">
         <h2>Воронка по запросам</h2>
-        <table><thead><tr><th>Запрос</th><th>Рынки K/P</th><th>Матчинг</th><th>No costs</th><th>Full costs</th><th>Причины отказов</th><th>Обновлено</th></tr></thead><tbody id="queryDiagTable"></tbody></table>
+        <table><thead><tr><th>Запрос</th><th>Рынки K/P</th><th>Матчинг</th><th>No costs</th><th>Full costs</th><th>Причины отказов</th><th>Пример rejected пары</th><th>Обновлено</th></tr></thead><tbody id="queryDiagTable"></tbody></table>
       </div>
     </section>
   </main>
@@ -947,6 +947,8 @@ _DASHBOARD_HTML = r"""<!doctype html>
       el("queryDiagBest").textContent = totals.best <= -999 ? "n/a" : pct(totals.best);
       el("queryDiagTable").innerHTML = rows.length ? rows.map(row => {
         const counts = row.source_counts || {}, matching = row.matching || {}, noCosts = row.no_costs || {}, full = row.full_costs || {};
+        const example = ((matching.rejected_examples || [])[0]) || {};
+        const exKalshi = example.kalshi || {}, exPoly = example.polymarket || {};
         return `<tr>
           <td><div class="route">${escapeHtml(row.query || "")}</div></td>
           <td class="num">${counts.kalshi || 0} / ${counts.polymarket || 0}</td>
@@ -954,9 +956,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
           <td>legs=${noCosts.candidate_legs || 0}<br>best=${noCosts.best_net_edge == null ? "n/a" : pct(noCosts.best_net_edge)}</td>
           <td>legs=${full.candidate_legs || 0}<br>pass=${row.passing_count || 0}<br>best=${full.best_net_edge == null ? "n/a" : pct(full.best_net_edge)}</td>
           <td><div class="chips">${chips(row.rejection_counts || {}, "reject") || `<span class="muted">нет отказов</span>`}</div></td>
+          <td>${example.match_score == null ? `<span class="muted">нет примера</span>` : `<div class="num">score=${Number(example.match_score || 0).toFixed(2)}</div><div>${escapeHtml(exKalshi.title || "")}</div><div class="muted">${escapeHtml(exPoly.title || "")}</div><div class="chips">${(example.warnings || []).slice(0, 4).map(item => `<span class="chip bad">${translateReason(item)}</span>`).join("")}</div>`}</td>
           <td class="num">${row.detected_at || ""}</td>
         </tr>`;
-      }).join("") : `<tr><td colspan="7" class="muted">Файл data/query-diagnostics.jsonl пока пуст. Запусти query-diagnostics monitor, чтобы увидеть воронку по preset-запросам.</td></tr>`;
+      }).join("") : `<tr><td colspan="8" class="muted">Файл data/query-diagnostics.jsonl пока пуст. Запусти query-diagnostics monitor, чтобы увидеть воронку по preset-запросам.</td></tr>`;
     }
 
     function renderScanSummary(targetId, scan) {
@@ -1065,6 +1068,13 @@ _DASHBOARD_HTML = r"""<!doctype html>
         profit_below_threshold: "прибыль ниже порога",
         orderbook_unavailable: "стакан недоступен",
         outcome_subject_differs: "исходы относятся к разным командам",
+        date_tokens_differ: "даты в тексте отличаются",
+        deadline_differs: "разный срок/время резолва",
+        price_pair_differs: "разная ценовая пара",
+        price_source_differs: "разный источник цены",
+        threshold_differs: "разные страйки/пороги",
+        direction_differs: "разное направление",
+        condition_kind_differs: "разный тип рынка",
       };
       return map[value] || value;
     }

@@ -282,6 +282,8 @@ def main() -> None:
     query_diag_parser.add_argument("--route-cost-bps", default="*=25")
     query_diag_parser.add_argument("--min-match-score", type=float, default=0.25)
     query_diag_parser.add_argument("--max-depth-pairs", type=int, default=4)
+    query_diag_parser.add_argument("--min-close-minutes", type=float)
+    query_diag_parser.add_argument("--max-close-hours", type=float, default=168.0)
     query_diag_parser.add_argument("--cache-ttl", type=float, default=900.0)
     query_diag_parser.add_argument("--output", type=Path, default=Path("data/query-diagnostics.jsonl"))
 
@@ -798,6 +800,8 @@ def _query_diagnostics(args: argparse.Namespace) -> None:
             for query in active_queries:
                 kalshi_markets = _fetch_kalshi(args.limit, query, cache_ttl=args.cache_ttl)
                 polymarket_markets = _fetch_polymarket(args.limit, query, cache_ttl=args.cache_ttl)
+                kalshi_markets = _filter_by_close_window(kalshi_markets, args.min_close_minutes, args.max_close_hours)
+                polymarket_markets = _filter_by_close_window(polymarket_markets, args.min_close_minutes, args.max_close_hours)
                 payload = build_query_diagnostic(
                     query=query,
                     kalshi_markets=kalshi_markets,

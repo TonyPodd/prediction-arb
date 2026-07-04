@@ -38,8 +38,28 @@ def candidate(reason: str | None = None, edge: float = 0.02) -> DepthCandidate:
 
 class QueryDiagnosticsTests(unittest.TestCase):
     def test_build_query_diagnostic_summarizes_matching_and_rejections(self) -> None:
-        kalshi_market = Market("kalshi", "k1", "BTC Up or Down", None, None, None, None, TopOfBook(), {})
-        polymarket_market = Market("polymarket", "p1", "BTC Up or Down", None, None, None, None, TopOfBook(), {})
+        kalshi_market = Market(
+            "kalshi",
+            "k1",
+            "Will Bitcoin be above $100,000 by Jan 1, 2027?",
+            None,
+            None,
+            None,
+            None,
+            TopOfBook(),
+            {},
+        )
+        polymarket_market = Market(
+            "polymarket",
+            "p1",
+            "Will the price of Bitcoin be above $50,000 on July 4?",
+            None,
+            None,
+            None,
+            None,
+            TopOfBook(),
+            {},
+        )
 
         with patch("prediction_arb.query_diagnostics.scan_depth_candidates", side_effect=[[candidate()], [candidate("profit_below_min"), candidate()]]):
             payload = build_query_diagnostic(
@@ -62,6 +82,8 @@ class QueryDiagnosticsTests(unittest.TestCase):
         self.assertEqual(payload["passing_count"], 1)
         self.assertEqual(payload["rejection_counts"], {"profit_below_min": 1})
         self.assertEqual(payload["best_passing"]["route"], "kalshi->polymarket")
+        self.assertEqual(len(payload["matching"]["rejected_examples"]), 1)
+        self.assertIn("threshold_differs", payload["matching"]["rejected_examples"][0]["warnings"])
 
     def test_latest_by_query_keeps_last_row_per_query(self) -> None:
         rows = [
